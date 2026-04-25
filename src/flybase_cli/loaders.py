@@ -366,7 +366,92 @@ def infer_json_columns(records: list[dict[str, object]]) -> list[str]:
     return [key for key, _ in ordered[:JSON_MAX_INFERRED_COLUMNS]]
 
 
-def ingest_json(conn: sqlite3.Connection, source: Path, table_name: str) -> int:
+def sanitize_json_child_name(name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_]+", "_", name).strip("_").lower()
+
+
+def discover_json_list_fields(records: list[dict[str, object]]) -> dict[str, dict[str, object]]:
+    discovered: dict[str, dict[str, object]] = {}
+    for record in records[:200]:
+        for key, value in record.items():
+            if not isinstance(value, list) or not value:
+                continue
+            field = discovered.setdefault(key, {"kind": None, "dict_rows": []})
+            first = value[0]
+            if all(isinstance(item, dict) for item in value):
+                if field["kind"] in (None, "dict"):
+                    field["kind"] = "dict"
+                    field["dict_rows"].extend(item for item in value if isinstance(item, dict))
+                continue
+            if all(json_scalar_to_text(item) is not None for item in value):
+                if field["kind"] is None:
+                    field["kind"] = "scalar"
+                continue
+            field["kind"] = "mixed"
+
+    filtered: dict[str, dict[str, object]] = {}
+    for key, value in discovered.items():
+        kind = value["kind"]
+        if kind == "scalar":
+            filtered[key] = {"kind": "scalar"}
+        elif kind == "dict":
+            columns = infer_json_columns(value["dict_rows"])
+            filtered[key] = {"kind": "dict", "columns": columns}
+    return filtered
+
+
+def ingest_json_child_tables(
+    conn: sqlite3.Connection,
+    parent_table_name: str,
+    records: list[dict[str, object]],
+) -> list[tuple[str, int]]:
+    list_fields = discover_json_list_fields(records)
+    ingested: list[tuple[str, int]] = []
+
+    for field_name, field_info in list_fields.items():
+        child_table_name = f"{parent_table_name}_{sanitize_json_child_name(field_name)}"
+        kind = field_info["kind"]
+        if kind == "scalar":
+            insert_sql = create_table(conn, child_table_name, ["parent_record_id", "ordinal", "value"])
+            batch: list[tuple[str, str, str]] = []
+            for index, record in enumerate(records, start=1):
+                record_id = pick_json_record_id(record, index)
+                values = record.get(field_name)
+                if not isinstance(values, list):
+                    continue
+                for ordinal, item in enumerate(values, start=1):
+                    scalar = json_scalar_to_text(item)
+                    if scalar is None:
+                        continue
+                    batch.append((record_id, str(ordinal), scalar))
+            conn.executemany(insert_sql, batch)
+            ingested.append((child_table_name, len(batch)))
+            continue
+
+        if kind == "dict":
+            columns = ["parent_record_id", "ordinal", *field_info["columns"], "payload_json"]
+            insert_sql = create_table(conn, child_table_name, columns)
+            batch: list[tuple[str, ...]] = []
+            for index, record in enumerate(records, start=1):
+                record_id = pick_json_record_id(record, index)
+                values = record.get(field_name)
+                if not isinstance(values, list):
+                    continue
+                for ordinal, item in enumerate(values, start=1):
+                    if not isinstance(item, dict):
+                        continue
+                    flattened = flatten_json_record(item)
+                    row = [record_id, str(ordinal)]
+                    row.extend(flattened.get(column, "") for column in field_info["columns"])
+                    row.append(json.dumps(item, sort_keys=True))
+                    batch.append(tuple(row))
+            conn.executemany(insert_sql, batch)
+            ingested.append((child_table_name, len(batch)))
+
+    return ingested
+
+
+def ingest_json(conn: sqlite3.Connection, source: Path, table_name: str) -> list[tuple[str, int]]:
     with open_maybe_gzip(source) as handle:
         payload = json.load(handle)
     records = extract_json_records(payload)
@@ -375,7 +460,7 @@ def ingest_json(conn: sqlite3.Connection, source: Path, table_name: str) -> int:
         insert_sql = create_table(conn, table_name, columns)
         batch = list(iter_json_rows(payload))
         conn.executemany(insert_sql, batch)
-        return len(batch)
+        return [(table_name, len(batch))]
 
     inferred_columns = infer_json_columns(records)
     columns = ["record_id", *inferred_columns, "payload_json"]
@@ -388,7 +473,9 @@ def ingest_json(conn: sqlite3.Connection, source: Path, table_name: str) -> int:
         row.append(json.dumps(record, sort_keys=True))
         batch.append(tuple(row))
     conn.executemany(insert_sql, batch)
-    return len(batch)
+    ingested = [(table_name, len(batch))]
+    ingested.extend(ingest_json_child_tables(conn, table_name, records))
+    return ingested
 
 
 def detect_ingest_format(source: Path) -> str | None:
@@ -411,14 +498,14 @@ def ingest_source(
     source: Path,
     table_name: str,
     no_header: bool = False,
-) -> int:
+) -> list[tuple[str, int]]:
     detected = detect_ingest_format(source)
     if detected == "delimited":
-        return ingest_delimited(conn, source, table_name, no_header=no_header)
+        return [(table_name, ingest_delimited(conn, source, table_name, no_header=no_header))]
     if detected == "fasta":
-        return ingest_fasta(conn, source, table_name)
+        return [(table_name, ingest_fasta(conn, source, table_name))]
     if detected in {"gff", "gtf"}:
-        return ingest_feature_file(conn, source, table_name)
+        return [(table_name, ingest_feature_file(conn, source, table_name))]
     if detected == "json":
         return ingest_json(conn, source, table_name)
     raise ValueError(f"unsupported ingest format: {source}")

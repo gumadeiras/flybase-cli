@@ -407,15 +407,45 @@ def open_db(path: Path) -> sqlite3.Connection:
 
 
 def ensure_registry(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS fb_ingest_registry (
-            source_path TEXT PRIMARY KEY,
-            table_name TEXT NOT NULL,
-            row_count INTEGER NOT NULL
+    existing = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='fb_ingest_registry'"
+    ).fetchone()
+    if not existing:
+        conn.execute(
+            """
+            CREATE TABLE fb_ingest_registry (
+                source_path TEXT NOT NULL,
+                table_name TEXT NOT NULL,
+                row_count INTEGER NOT NULL,
+                PRIMARY KEY (source_path, table_name)
+            )
+            """
         )
-        """
-    )
+        return
+
+    columns = conn.execute("PRAGMA table_info(fb_ingest_registry)").fetchall()
+    source_path_column = next((column for column in columns if column[1] == "source_path"), None)
+    table_name_column = next((column for column in columns if column[1] == "table_name"), None)
+    if source_path_column and source_path_column[5] == 1 and table_name_column and table_name_column[5] == 0:
+        conn.execute("ALTER TABLE fb_ingest_registry RENAME TO fb_ingest_registry_old")
+        conn.execute(
+            """
+            CREATE TABLE fb_ingest_registry (
+                source_path TEXT NOT NULL,
+                table_name TEXT NOT NULL,
+                row_count INTEGER NOT NULL,
+                PRIMARY KEY (source_path, table_name)
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO fb_ingest_registry (source_path, table_name, row_count)
+            SELECT source_path, table_name, row_count
+            FROM fb_ingest_registry_old
+            """
+        )
+        conn.execute("DROP TABLE fb_ingest_registry_old")
 
 
 def upsert_registry(
@@ -428,8 +458,8 @@ def upsert_registry(
         """
         INSERT INTO fb_ingest_registry (source_path, table_name, row_count)
         VALUES (?, ?, ?)
-        ON CONFLICT(source_path)
-        DO UPDATE SET table_name = excluded.table_name, row_count = excluded.row_count
+        ON CONFLICT(source_path, table_name)
+        DO UPDATE SET row_count = excluded.row_count
         """,
         (str(source), table_name, row_count),
     )
@@ -446,15 +476,15 @@ def ingest_files(
     try:
         for source in sources:
             table_name = table_name_from_path(source.name)
-            row_count = ingest_source(conn, source, table_name, no_header=no_header)
-            upsert_registry(conn, source, table_name, row_count)
-            ingested.append(
-                {
-                    "source_path": str(source),
-                    "table_name": table_name,
-                    "row_count": row_count,
-                }
-            )
+            for emitted_table_name, row_count in ingest_source(conn, source, table_name, no_header=no_header):
+                upsert_registry(conn, source, emitted_table_name, row_count)
+                ingested.append(
+                    {
+                        "source_path": str(source),
+                        "table_name": emitted_table_name,
+                        "row_count": row_count,
+                    }
+                )
         conn.commit()
     finally:
         conn.close()
