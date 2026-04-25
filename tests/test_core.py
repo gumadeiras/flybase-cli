@@ -15,6 +15,9 @@ from flybase_cli.config import SYNC_PRESETS
 from flybase_cli.core import (
     extract_genomes,
     build_manifest_from_url,
+    find_genome,
+    genome_asset_pattern,
+    genome_section_url,
     list_genomes,
     normalize_bucket_href,
     open_db,
@@ -74,6 +77,50 @@ class FlybaseCoreTests(unittest.TestCase):
                 }
             ],
         )
+
+    def test_genome_section_url(self) -> None:
+        self.assertEqual(
+            genome_section_url(
+                "https://s3ftp.flybase.org/genomes/Drosophila_melanogaster/dmel_r6.67_FB2026_01",
+                "fasta",
+            ),
+            "https://s3ftp.flybase.org/genomes/Drosophila_melanogaster/dmel_r6.67_FB2026_01/fasta/",
+        )
+
+    def test_genome_asset_pattern(self) -> None:
+        self.assertEqual(genome_asset_pattern("mirna"), ["miRNA"])
+
+    def test_find_genome_exact_match(self) -> None:
+        original = list_genomes
+        try:
+            import flybase_cli.core as core
+
+            core.list_genomes = lambda release: [
+                {
+                    "label": "dmel_r6.67",
+                    "species": "Drosophila_melanogaster",
+                    "genome_build": "dmel_r6.67_FB2026_01",
+                    "url": "https://example.test/dmel",
+                }
+            ]
+            match = find_genome(release="FB2026_01", genome="dmel_r6.67")
+            self.assertEqual(match["genome_build"], "dmel_r6.67_FB2026_01")
+        finally:
+            core.list_genomes = original
+
+    def test_find_genome_ambiguous_match(self) -> None:
+        original = list_genomes
+        try:
+            import flybase_cli.core as core
+
+            core.list_genomes = lambda release: [
+                {"label": "dmel_r6.67", "species": "dmel", "genome_build": "a", "url": "https://example.test/a"},
+                {"label": "dmel_r6.68", "species": "dmel", "genome_build": "b", "url": "https://example.test/b"},
+            ]
+            with self.assertRaisesRegex(ValueError, "multiple genomes matched"):
+                find_genome(release="FB2026_01", species="dmel")
+        finally:
+            core.list_genomes = original
 
     def test_sanitize_columns(self) -> None:
         self.assertEqual(

@@ -35,6 +35,12 @@ python3 flybase_cli.py sync gene-core --release FB2026_01
 
 python3 flybase_cli.py genomes --release FB2026_01
 
+python3 flybase_cli.py sync-genome \
+  --release FB2026_01 \
+  --genome dmel_r6.67 \
+  --section fasta \
+  --asset mirna
+
 PYTHONPATH=src python3 -m flybase_cli sync gene-expression
 
 python3 flybase_cli.py manifest \
@@ -81,6 +87,13 @@ python3 flybase_cli.py api domain/FBgn0001250
 
 - `genomes --release FB2026_01` lists genome builds linked from that FlyBase release
 - `sync-url` turns a crawlable FlyBase directory URL into a one-step local sync
+- `sync-genome` resolves a release/build pair into the right genome-section URL automatically
+
+## Genome sync
+
+- sections: `fasta`, `gff`, `gtf`, `dna`, `chado-xml`
+- asset shortcuts include `mirna`, `transcript`, `translation`, `gene`, `chromosome`, `cds`, `ncrna`, `gff`, `gtf`
+- use `--include`/`--exclude` for narrower file selection on top of the asset preset
 
 ## Ingest formats
 
@@ -109,6 +122,7 @@ python3 flybase_cli.py api domain/FBgn0001250
 - `sync --release FB2026_01` defaults to `data/flybase/FB2026_01.sqlite` to avoid cross-release mixing.
 - `manifest --url` lets you crawl non-`releases/` FlyBase directories such as genome FASTA/GFF trees.
 - `sync-url` is the shortest path for genome assets once you know the directory URL.
+- `sync-genome` is the shortest path when you know the FlyBase release + genome build label.
 - some FlyBase `.gff.gz` assets are tar-wrapped gzip archives; loader handles that transparently.
 - `pg-load` stages the full Postgres import script for `releases/<release>/psql/<release>.sql.gz`.
 - `pg-load --execute` runs the staged script when `createdb` and `psql` are installed locally.
