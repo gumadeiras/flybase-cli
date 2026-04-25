@@ -66,6 +66,7 @@ python3 flybase_cli.py ingest \
 python3 flybase_cli.py tables --columns
 
 python3 flybase_cli.py describe --sample-values 2
+python3 flybase_cli.py schema-export --sample-values 1
 
 python3 flybase_cli.py fts-build
 
@@ -147,7 +148,16 @@ python3 flybase_cli.py sql \
 ## Metadata
 
 - `describe` summarizes ingested tables with row counts, source paths, columns, and representative non-empty values
+- `schema-export` writes the same metadata to a deterministic JSON artifact beside the SQLite DB, eg `FB2026_01.schema.json`
 - useful first step before writing ad hoc SQL or building agent query plans
+
+Example:
+
+```bash
+python3 flybase_cli.py schema-export \
+  --db data/flybase/FB2026_01.sqlite \
+  --sample-values 1
+```
 
 ## Notes
 
