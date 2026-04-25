@@ -19,6 +19,7 @@ from flybase_cli.core import (
     genome_asset_pattern,
     genome_section_url,
     list_genomes,
+    list_tables,
     normalize_bucket_href,
     open_db,
     path_from_root_url,
@@ -253,10 +254,51 @@ class FlybaseCoreTests(unittest.TestCase):
             )
             conn = sqlite3.connect(":memory:")
             try:
-                row_count = ingest_json(conn, source, "fb_json")
-                self.assertEqual(row_count, 2)
+                tables = ingest_json(conn, source, "fb_json")
+                self.assertEqual(tables[0], ("fb_json", 2))
                 rows = conn.execute("select record_id, symbol from fb_json order by record_id").fetchall()
                 self.assertEqual(rows, [("FBgn1", "gene1"), ("FBgn2", "gene2")])
+            finally:
+                conn.close()
+
+    def test_ingest_json_list_children(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            source = tmp / "genes.json.gz"
+            source.write_bytes(
+                gzip.compress(
+                    json.dumps(
+                        [
+                            {
+                                "primaryId": "FBgn1",
+                                "symbol": "gene1",
+                                "symbolSynonyms": ["g1", "gene-one"],
+                                "gene": {"geneId": "FBgnParent1", "symbol": "parent1"},
+                                "genomeLocations": [{"assembly": "R6", "chromosome": "2L"}],
+                            }
+                        ]
+                    ).encode("utf-8")
+                )
+            )
+            conn = sqlite3.connect(":memory:")
+            try:
+                tables = ingest_json(conn, source, "fb_json")
+                self.assertEqual(
+                    tables,
+                    [
+                        ("fb_json", 1),
+                        ("fb_json_symbolsynonyms", 2),
+                        ("fb_json_genomelocations", 1),
+                    ],
+                )
+                synonyms = conn.execute(
+                    "select parent_record_id, ordinal, value from fb_json_symbolsynonyms order by ordinal"
+                ).fetchall()
+                self.assertEqual(synonyms, [("FBgn1", "1", "g1"), ("FBgn1", "2", "gene-one")])
+                locations = conn.execute(
+                    "select parent_record_id, assembly, chromosome from fb_json_genomelocations"
+                ).fetchall()
+                self.assertEqual(locations, [("FBgn1", "R6", "2L")])
             finally:
                 conn.close()
 
@@ -316,9 +358,10 @@ class FlybaseCoreTests(unittest.TestCase):
                 conn.execute(
                     """
                     CREATE TABLE fb_ingest_registry (
-                        source_path TEXT PRIMARY KEY,
+                        source_path TEXT NOT NULL,
                         table_name TEXT NOT NULL,
-                        row_count INTEGER NOT NULL
+                        row_count INTEGER NOT NULL,
+                        PRIMARY KEY (source_path, table_name)
                     )
                     """
                 )
@@ -359,6 +402,44 @@ class FlybaseCoreTests(unittest.TestCase):
             self.assertEqual(summary["file_count"], 1)
             self.assertTrue((tmp / "manifest.json").exists())
             self.assertEqual(summary["ingested_tables"][0]["row_count"], 1)
+
+    def test_registry_migrates_single_table_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "flybase.sqlite"
+            conn = open_db(db_path)
+            try:
+                conn.execute(
+                    """
+                    CREATE TABLE fb_ingest_registry (
+                        source_path TEXT PRIMARY KEY,
+                        table_name TEXT NOT NULL,
+                        row_count INTEGER NOT NULL
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO fb_ingest_registry VALUES
+                    ('/tmp/source.json.gz', 'fb_json', 1)
+                    """
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            summary = list_tables(db_path)
+            self.assertEqual(summary[0]["table_name"], "fb_json")
+
+            conn = open_db(db_path)
+            try:
+                pk_map = {
+                    row[1]: row[5]
+                    for row in conn.execute("PRAGMA table_info(fb_ingest_registry)").fetchall()
+                }
+                self.assertEqual(pk_map["source_path"], 1)
+                self.assertEqual(pk_map["table_name"], 2)
+            finally:
+                conn.close()
 
 
 if __name__ == "__main__":

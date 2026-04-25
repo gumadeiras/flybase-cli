@@ -115,7 +115,20 @@ python3 flybase_cli.py api domain/FBgn0001250
 
 - top-level scalar JSON fields become queryable SQLite columns
 - one nested dict level is flattened, eg `gene.symbol` -> `gene_symbol`
+- repeated top-level lists become child tables, eg `symbolSynonyms` -> `<table>_symbolsynonyms`
 - full source record remains in `payload_json`
+
+Example:
+
+```bash
+python3 flybase_cli.py sql \
+  "select record_id, symbol, gene_geneId from fb_ncrna_genes_fb_2026_01 limit 5"
+
+python3 flybase_cli.py sql \
+  "select parent_record_id, ordinal, value \
+   from fb_ncrna_genes_fb_2026_01_symbolsynonyms \
+   limit 5"
+```
 
 ## Search
 
