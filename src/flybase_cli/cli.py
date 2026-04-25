@@ -22,12 +22,14 @@ from .core import (
     fetch_bytes,
     filter_manifest,
     ingest_files,
+    list_genomes,
     list_tables,
     load_manifest,
     rebuild_search_index,
     release_base_url,
     run_query,
     search_index,
+    sync_manifest,
     sync_preset,
     write_json,
 )
@@ -131,6 +133,29 @@ def cmd_sync(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_sync_url(args: argparse.Namespace) -> int:
+    root = Path(args.root)
+    db_path = Path(args.db) if args.db else default_db_for_release(root, args.release)
+    manifest = filter_manifest(
+        build_manifest_from_url(args.url),
+        args.include,
+        args.exclude,
+    )
+    manifest_path = Path(args.manifest) if args.manifest else root / "manifests" / args.release / "url-sync.json"
+    summary = sync_manifest(
+        manifest,
+        root=root,
+        db_path=db_path,
+        manifest_path=manifest_path,
+        force=args.force,
+        no_header=args.no_header,
+    )
+    summary["url"] = args.url
+    summary["db_path"] = str(db_path)
+    print_json(summary)
+    return 0
+
+
 def cmd_api(args: argparse.Namespace) -> int:
     endpoint = args.endpoint.lstrip("/")
     url = urllib.parse.urljoin(BASE_API, endpoint)
@@ -151,6 +176,11 @@ def cmd_api(args: argparse.Namespace) -> int:
 
 def cmd_release_url(args: argparse.Namespace) -> int:
     print_json({"release": args.release, "base_url": release_base_url(args.release)})
+    return 0
+
+
+def cmd_genomes(args: argparse.Namespace) -> int:
+    print_json(list_genomes(args.release))
     return 0
 
 
@@ -259,9 +289,25 @@ def build_parser() -> argparse.ArgumentParser:
     sync_parser.add_argument("--force", action="store_true")
     sync_parser.set_defaults(func=cmd_sync)
 
+    sync_url_parser = subparsers.add_parser("sync-url", help="crawl + download + ingest an arbitrary FlyBase directory URL")
+    sync_url_parser.add_argument("--url", required=True)
+    sync_url_parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    sync_url_parser.add_argument("--db")
+    sync_url_parser.add_argument("--release", default=DEFAULT_RELEASE)
+    sync_url_parser.add_argument("--manifest")
+    sync_url_parser.add_argument("--include", action="append", default=[])
+    sync_url_parser.add_argument("--exclude", action="append", default=[])
+    sync_url_parser.add_argument("--force", action="store_true")
+    sync_url_parser.add_argument("--no-header", action="store_true")
+    sync_url_parser.set_defaults(func=cmd_sync_url)
+
     release_parser = subparsers.add_parser("release-url", help="show the bulk-data base URL for a release")
     release_parser.add_argument("--release", default=DEFAULT_RELEASE)
     release_parser.set_defaults(func=cmd_release_url)
+
+    genomes_parser = subparsers.add_parser("genomes", help="list genome builds linked from a FlyBase release")
+    genomes_parser.add_argument("--release", default=DEFAULT_RELEASE)
+    genomes_parser.set_defaults(func=cmd_genomes)
 
     fts_build_parser = subparsers.add_parser("fts-build", help="build a local full-text index")
     fts_build_parser.add_argument("--db", default=str(DEFAULT_DB))

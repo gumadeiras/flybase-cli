@@ -12,17 +12,41 @@ from .config import BASE_RELEASES, BATCH_SIZE, SEARCH_ID_CANDIDATES, SyncPreset
 from .loaders import ingest_source, is_ingestable
 
 
+def site_root_url() -> str:
+    parts = urllib.parse.urlsplit(BASE_RELEASES)
+    return f"{parts.scheme}://{parts.netloc}/"
+
+
 class DirectoryIndexParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
-        self.entries: list[str] = []
+        self.entries: list[dict[str, str]] = []
+        self.current_href: str | None = None
+        self.current_text: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag != "a":
             return
         href = dict(attrs).get("href")
         if href:
-            self.entries.append(href)
+            self.current_href = href
+            self.current_text = []
+
+    def handle_data(self, data: str) -> None:
+        if self.current_href is not None:
+            self.current_text.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag != "a" or self.current_href is None:
+            return
+        self.entries.append(
+            {
+                "href": self.current_href,
+                "text": "".join(self.current_text).strip(),
+            }
+        )
+        self.current_href = None
+        self.current_text = []
 
 
 def fetch_via_curl(url: str) -> bytes:
@@ -80,11 +104,16 @@ def normalize_bucket_href(href: str, release: str) -> str:
     return normalize_path(clean)
 
 
-def scrape_index(url: str) -> list[str]:
+def scrape_links(url: str) -> list[dict[str, str]]:
     parser = DirectoryIndexParser()
     parser.feed(fetch_text(url))
+    return parser.entries
+
+
+def scrape_index(url: str) -> list[str]:
     results: list[str] = []
-    for href in parser.entries:
+    for entry in scrape_links(url):
+        href = entry["href"]
         if href.startswith(("?", "#")):
             continue
         clean = href.split("?", 1)[0]
@@ -173,6 +202,35 @@ def build_manifest_from_url(root_url: str) -> list[dict[str, str]]:
     return sorted(files, key=lambda item: item["path"])
 
 
+def extract_genomes(links: list[dict[str, str]]) -> list[dict[str, str]]:
+    genomes: list[dict[str, str]] = []
+    for link in links:
+        href = link["href"].split("?", 1)[0]
+        if not href.startswith("/genomes/"):
+            continue
+        parts = [part for part in href.split("/") if part]
+        if len(parts) < 3:
+            continue
+        species = parts[1]
+        genome_build = parts[2]
+        label = link["text"] or genome_build
+        genomes.append(
+            {
+                "label": label,
+                "species": species,
+                "genome_build": genome_build,
+                "url": urllib.parse.urljoin(site_root_url(), href.lstrip("/")),
+            }
+        )
+    return genomes
+
+
+def list_genomes(release: str = "current") -> list[dict[str, str]]:
+    links = scrape_links(release_base_url(release))
+    genomes = extract_genomes(links)
+    return sorted(genomes, key=lambda item: (item["species"], item["genome_build"]))
+
+
 def write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -231,6 +289,30 @@ def download_manifest_entries(
             continue
         download_file(item["url"], dest)
     return local_paths
+
+
+def sync_manifest(
+    manifest: list[dict[str, str]],
+    *,
+    root: Path,
+    db_path: Path,
+    manifest_path: Path | None = None,
+    force: bool = False,
+    no_header: bool = False,
+) -> dict[str, object]:
+    if manifest_path is not None:
+        write_json(manifest_path, manifest)
+    local_paths = download_manifest_entries(manifest, root, force=force)
+    ingested = ingest_files(
+        db_path,
+        [path for path, _ in local_paths if is_ingestable(path)],
+        no_header=no_header,
+    )
+    return {
+        "manifest_path": str(manifest_path) if manifest_path is not None else None,
+        "file_count": len(manifest),
+        "ingested_tables": ingested,
+    }
 
 
 def table_name_from_path(path: str) -> str:
@@ -509,14 +591,16 @@ def sync_preset(
         preset.includes,
         preset.excludes,
     )
-    write_json(manifest_path, manifest)
-    local_paths = download_manifest_entries(manifest, root, force=force)
-    ingested = ingest_files(db_path, [path for path, _ in local_paths if is_ingestable(path)])
+    summary = sync_manifest(
+        manifest,
+        root=root,
+        db_path=db_path,
+        manifest_path=manifest_path,
+        force=force,
+    )
     return {
         "preset": preset.name,
         "description": preset.description,
         "release": release,
-        "manifest_path": str(manifest_path),
-        "file_count": len(manifest),
-        "ingested_tables": ingested,
+        **summary,
     }
