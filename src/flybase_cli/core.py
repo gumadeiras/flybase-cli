@@ -1,23 +1,15 @@
 from __future__ import annotations
 
-import csv
-import gzip
 import json
-import re
 import sqlite3
+import subprocess
 import urllib.parse
 import urllib.request
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Iterator
 
-from .config import (
-    BASE_RELEASES,
-    BATCH_SIZE,
-    INGEST_SUFFIXES,
-    SEARCH_ID_CANDIDATES,
-    SyncPreset,
-)
+from .config import BASE_RELEASES, BATCH_SIZE, SEARCH_ID_CANDIDATES, SyncPreset
+from .loaders import ingest_source, is_ingestable
 
 
 class DirectoryIndexParser(HTMLParser):
@@ -33,19 +25,47 @@ class DirectoryIndexParser(HTMLParser):
             self.entries.append(href)
 
 
+def fetch_via_curl(url: str) -> bytes:
+    result = subprocess.run(
+        ["curl", "-fsSL", url],
+        check=True,
+        capture_output=True,
+    )
+    return result.stdout
+
+
+def request_bytes(url: str) -> bytes:
+    request = urllib.request.Request(url, headers={"User-Agent": "curl/8.7.1"})
+    with urllib.request.urlopen(request) as response:
+        payload = response.read()
+        if getattr(response, "status", 200) == 202 or not payload:
+            raise RuntimeError(f"empty or challenged response for {url}")
+        return payload
+
+
 def fetch_text(url: str) -> str:
-    with urllib.request.urlopen(url) as response:
-        return response.read().decode("utf-8", errors="replace")
+    return fetch_bytes(url).decode("utf-8", errors="replace")
 
 
 def fetch_bytes(url: str) -> bytes:
-    with urllib.request.urlopen(url) as response:
-        return response.read()
+    try:
+        return request_bytes(url)
+    except Exception:
+        return fetch_via_curl(url)
 
 
 def release_base_url(release: str) -> str:
     normalized = release.strip("/")
     return urllib.parse.urljoin(BASE_RELEASES, f"{normalized}/")
+
+
+def normalize_crawl_url(url: str) -> str:
+    clean = url.split("?", 1)[0]
+    if clean.endswith("index.html"):
+        clean = clean[: -len("index.html")]
+    if not clean.endswith("/"):
+        clean = f"{clean}/"
+    return clean
 
 
 def normalize_path(path: str) -> str:
@@ -60,14 +80,14 @@ def normalize_bucket_href(href: str, release: str) -> str:
     return normalize_path(clean)
 
 
-def scrape_index(url: str, release: str) -> list[str]:
+def scrape_index(url: str) -> list[str]:
     parser = DirectoryIndexParser()
     parser.feed(fetch_text(url))
     results: list[str] = []
     for href in parser.entries:
-        if href.startswith(("?", "#", "http://", "https://")):
+        if href.startswith(("?", "#")):
             continue
-        clean = normalize_bucket_href(href, release)
+        clean = href.split("?", 1)[0]
         if clean in ("", "../", "./", "index.html"):
             continue
         results.append(clean)
@@ -90,8 +110,10 @@ def build_manifest(prefix: str, release: str = "current") -> list[dict[str, str]
             continue
         seen.add(current)
         page_url = urllib.parse.urljoin(base_url, current)
-        for entry in scrape_index(page_url, release):
-            normalized_entry = entry[:-10] if entry.endswith("/index.html") else entry
+        for entry in scrape_index(page_url):
+            normalized_entry = normalize_bucket_href(entry, release)
+            if normalized_entry.endswith("index.html"):
+                normalized_entry = normalized_entry[: -len("index.html")]
             if current and not normalized_entry.startswith(current):
                 continue
             if current and normalized_entry == current.rstrip("/"):
@@ -108,6 +130,49 @@ def build_manifest(prefix: str, release: str = "current") -> list[dict[str, str]
     return sorted(files, key=lambda item: item["path"])
 
 
+def path_from_root_url(root_url: str, url: str) -> str:
+    root = urllib.parse.urlsplit(normalize_crawl_url(root_url))
+    target = urllib.parse.urlsplit(url.split("?", 1)[0])
+    if (root.scheme, root.netloc) != (target.scheme, target.netloc):
+        return ""
+    if not target.path.startswith(root.path):
+        return ""
+    relative = target.path[len(root.path) :].lstrip("/")
+    if url.endswith("/") and relative and not relative.endswith("/"):
+        relative = f"{relative}/"
+    return relative
+
+
+def build_manifest_from_url(root_url: str) -> list[dict[str, str]]:
+    base_url = normalize_crawl_url(root_url)
+    todo = [base_url]
+    seen: set[str] = set()
+    files: list[dict[str, str]] = []
+
+    while todo:
+        current_url = todo.pop()
+        if current_url in seen:
+            continue
+        seen.add(current_url)
+        for href in scrape_index(current_url):
+            absolute = urllib.parse.urljoin(current_url, href)
+            if absolute.endswith(("index.html", "/")):
+                normalized = normalize_crawl_url(absolute)
+            else:
+                normalized = absolute.split("?", 1)[0]
+            relative = path_from_root_url(base_url, normalized)
+            if not relative:
+                continue
+            if normalized == base_url or relative in {"", "."}:
+                continue
+            if normalized.endswith("/"):
+                todo.append(normalized)
+                continue
+            files.append({"path": relative, "url": normalized})
+
+    return sorted(files, key=lambda item: item["path"])
+
+
 def write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -117,7 +182,9 @@ def load_manifest(path: Path) -> list[dict[str, str]]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def compile_patterns(patterns: list[str] | tuple[str, ...]) -> list[re.Pattern[str]]:
+def compile_patterns(patterns: list[str] | tuple[str, ...]) -> list:
+    import re
+
     return [re.compile(pattern) for pattern in patterns]
 
 
@@ -143,9 +210,11 @@ def filter_manifest(
 
 def download_file(url: str, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    with urllib.request.urlopen(url) as response, dest.open("wb") as handle:
-        while chunk := response.read(1024 * 1024):
-            handle.write(chunk)
+    try:
+        payload = request_bytes(url)
+        dest.write_bytes(payload)
+    except Exception:
+        subprocess.run(["curl", "-fsSL", "-o", str(dest), url], check=True)
 
 
 def download_manifest_entries(
@@ -165,8 +234,32 @@ def download_manifest_entries(
 
 
 def table_name_from_path(path: str) -> str:
+    import re
+
     name = Path(path).name
-    for suffix in INGEST_SUFFIXES:
+    suffixes = (
+        ".tsv.gz",
+        ".csv.gz",
+        ".fasta.gz",
+        ".fa.gz",
+        ".fna.gz",
+        ".faa.gz",
+        ".gff.gz",
+        ".gff3.gz",
+        ".gtf.gz",
+        ".json.gz",
+        ".tsv",
+        ".csv",
+        ".fasta",
+        ".fa",
+        ".fna",
+        ".faa",
+        ".gff",
+        ".gff3",
+        ".gtf",
+        ".json",
+    )
+    for suffix in suffixes:
         if name.endswith(suffix):
             name = name[: -len(suffix)]
             break
@@ -174,117 +267,11 @@ def table_name_from_path(path: str) -> str:
     return f"fb_{safe or 'table'}"
 
 
-def sample_delimiter(path: Path) -> str:
-    return "," if ".csv" in path.name.lower() else "\t"
-
-
-def open_maybe_gzip(path: Path):
-    if path.suffix == ".gz":
-        return gzip.open(path, "rt", encoding="utf-8", newline="")
-    return path.open("r", encoding="utf-8", newline="")
-
-
 def open_db(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.execute("PRAGMA journal_mode=WAL")
     return conn
-
-
-def sanitize_columns(columns: list[str]) -> list[str]:
-    seen: dict[str, int] = {}
-    output: list[str] = []
-    for index, column in enumerate(columns, start=1):
-        base = re.sub(r"[^A-Za-z0-9_]+", "_", column.strip()).strip("_").lower()
-        if not base:
-            base = f"col_{index}"
-        seen[base] = seen.get(base, 0) + 1
-        output.append(base if seen[base] == 1 else f"{base}_{seen[base]}")
-    return output
-
-
-def iter_delimited_rows(source: Path) -> Iterator[tuple[list[str], str]]:
-    delimiter = sample_delimiter(source)
-    with open_maybe_gzip(source) as handle:
-        reader = csv.reader(handle, delimiter=delimiter)
-        for row in reader:
-            yield row, delimiter
-
-
-def read_header_and_rows(
-    source: Path,
-    no_header: bool,
-) -> tuple[list[str], list[str] | None, Iterator[tuple[list[str], str]], str]:
-    row_iter = iter_delimited_rows(source)
-    delimiter = "\t"
-
-    for row, delimiter in row_iter:
-        if not row:
-            continue
-        if row[0].startswith("##") and len(row) == 1:
-            continue
-        if no_header:
-            header = [f"col_{index}" for index in range(1, len(row) + 1)]
-            return header, row, row_iter, delimiter
-        row[0] = row[0].lstrip("#")
-        return row, None, row_iter, delimiter
-
-    raise ValueError(f"empty file: {source}")
-
-
-def normalize_row(row: list[str], width: int, delimiter: str) -> list[str]:
-    if len(row) < width:
-        return row + [""] * (width - len(row))
-    if len(row) > width:
-        return row[: width - 1] + [delimiter.join(row[width - 1 :])]
-    return row
-
-
-def create_table(conn: sqlite3.Connection, table_name: str, columns: list[str]) -> str:
-    conn.execute(f'DROP TABLE IF EXISTS "{table_name}"')
-    create_sql = ", ".join(f'"{column}" TEXT' for column in columns)
-    conn.execute(f'CREATE TABLE "{table_name}" ({create_sql})')
-    quoted_columns = ", ".join(f'"{column}"' for column in columns)
-    placeholders = ", ".join("?" for _ in columns)
-    return f'INSERT INTO "{table_name}" ({quoted_columns}) VALUES ({placeholders})'
-
-
-def flush_batch(
-    conn: sqlite3.Connection,
-    insert_sql: str,
-    batch: list[list[str]],
-    row_count: int,
-) -> int:
-    if batch:
-        conn.executemany(insert_sql, batch)
-        row_count += len(batch)
-    return row_count
-
-
-def ingest_delimited(
-    conn: sqlite3.Connection,
-    source: Path,
-    table_name: str,
-    no_header: bool = False,
-) -> int:
-    raw_header, first_data_row, row_iter, delimiter = read_header_and_rows(source, no_header)
-    columns = sanitize_columns(raw_header)
-    insert_sql = create_table(conn, table_name, columns)
-    batch: list[list[str]] = []
-    row_count = 0
-
-    if first_data_row is not None:
-        batch.append(normalize_row(first_data_row, len(columns), delimiter))
-
-    for row, _ in row_iter:
-        if not row:
-            continue
-        batch.append(normalize_row(row, len(columns), delimiter))
-        if len(batch) >= BATCH_SIZE:
-            row_count = flush_batch(conn, insert_sql, batch, row_count)
-            batch.clear()
-
-    return flush_batch(conn, insert_sql, batch, row_count)
 
 
 def ensure_registry(conn: sqlite3.Connection) -> None:
@@ -327,7 +314,7 @@ def ingest_files(
     try:
         for source in sources:
             table_name = table_name_from_path(source.name)
-            row_count = ingest_delimited(conn, source, table_name, no_header=no_header)
+            row_count = ingest_source(conn, source, table_name, no_header=no_header)
             upsert_registry(conn, source, table_name, row_count)
             ingested.append(
                 {
@@ -433,7 +420,8 @@ def rebuild_search_index(
 
             batch: list[tuple[str, str, str]] = []
             row_count = 0
-            sql = f'SELECT rowid, {", ".join(f"""\"{column}\"""" for column in columns)} FROM "{table_name}"'
+            quoted = ", ".join(f'"{column}"' for column in columns)
+            sql = f'SELECT rowid, {quoted} FROM "{table_name}"'
             for result in conn.execute(sql):
                 rowid = int(result[0])
                 row = tuple("" if value is None else str(value) for value in result[1:])
@@ -506,11 +494,6 @@ def search_index(
         ]
     finally:
         conn.close()
-
-
-def is_ingestable(path: Path) -> bool:
-    path_str = path.name
-    return any(path_str.endswith(suffix) for suffix in INGEST_SUFFIXES)
 
 
 def sync_preset(

@@ -17,6 +17,7 @@ from .config import (
 )
 from .core import (
     build_manifest,
+    build_manifest_from_url,
     fetch_bytes,
     filter_manifest,
     ingest_files,
@@ -46,7 +47,10 @@ def default_db_for_release(root: Path, release: str) -> Path:
 
 
 def cmd_manifest(args: argparse.Namespace) -> int:
-    manifest = build_manifest(args.prefix, release=args.release)
+    if args.url:
+        manifest = build_manifest_from_url(args.url)
+    else:
+        manifest = build_manifest(args.prefix, release=args.release)
     filtered = filter_manifest(manifest, args.include, args.exclude)
     write_json(Path(args.output), filtered)
     print(f"{len(filtered)} files -> {args.output}")
@@ -164,8 +168,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="FlyBase sync/query helper for agents.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    manifest_parser = subparsers.add_parser("manifest", help="scrape a file manifest")
+    manifest_parser = subparsers.add_parser("manifest", help="scrape a release prefix or FlyBase directory URL")
     manifest_parser.add_argument("--prefix", default="precomputed_files/genes/")
+    manifest_parser.add_argument("--url")
     manifest_parser.add_argument("--release", default=DEFAULT_RELEASE)
     manifest_parser.add_argument("--include", action="append", default=[])
     manifest_parser.add_argument("--exclude", action="append", default=[])
@@ -180,7 +185,7 @@ def build_parser() -> argparse.ArgumentParser:
     download_parser.add_argument("--force", action="store_true")
     download_parser.set_defaults(func=cmd_download)
 
-    ingest_parser = subparsers.add_parser("ingest", help="ingest TSV/CSV(.gz) into sqlite")
+    ingest_parser = subparsers.add_parser("ingest", help="ingest supported FlyBase files into sqlite")
     ingest_parser.add_argument("sources", nargs="+")
     ingest_parser.add_argument("--db", default=str(DEFAULT_DB))
     ingest_parser.add_argument("--no-header", action="store_true")

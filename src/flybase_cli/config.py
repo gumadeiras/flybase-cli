@@ -11,7 +11,21 @@ DEFAULT_ROOT = Path("data/flybase")
 DEFAULT_DB = DEFAULT_ROOT / "flybase.sqlite"
 DEFAULT_MANIFEST = DEFAULT_ROOT / "manifest.json"
 BATCH_SIZE = 1000
-INGEST_SUFFIXES = (".tsv", ".csv", ".tsv.gz", ".csv.gz")
+DELIMITED_SUFFIXES = (".tsv", ".csv", ".tsv.gz", ".csv.gz")
+FASTA_SUFFIXES = (
+    ".fasta",
+    ".fa",
+    ".fna",
+    ".faa",
+    ".fasta.gz",
+    ".fa.gz",
+    ".fna.gz",
+    ".faa.gz",
+)
+GFF_SUFFIXES = (".gff", ".gff3", ".gff.gz", ".gff3.gz")
+GTF_SUFFIXES = (".gtf", ".gtf.gz")
+JSON_SUFFIXES = (".json", ".json.gz")
+INGEST_SUFFIXES = DELIMITED_SUFFIXES + FASTA_SUFFIXES + GFF_SUFFIXES + GTF_SUFFIXES + JSON_SUFFIXES
 SEARCH_ID_CANDIDATES = (
     "fbgn_id",
     "primary_fbgn",
@@ -21,6 +35,16 @@ SEARCH_ID_CANDIDATES = (
     "gene_symbol",
     "flybase_fbtr",
     "flybase_fbpp",
+)
+JSON_ID_CANDIDATES = (
+    "primaryId",
+    "primary_id",
+    "id",
+    "fbid",
+    "fbgn_id",
+    "gene_symbol",
+    "symbol",
+    "name",
 )
 
 
