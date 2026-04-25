@@ -72,6 +72,16 @@ class SyncPreset:
     excludes: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class GenomeSyncPreset:
+    name: str
+    description: str
+    section: str
+    asset: str | None = None
+    includes: tuple[str, ...] = ()
+    excludes: tuple[str, ...] = ()
+
+
 SYNC_PRESETS: dict[str, SyncPreset] = {
     "gene-core": SyncPreset(
         name="gene-core",
@@ -105,5 +115,57 @@ SYNC_PRESETS: dict[str, SyncPreset] = {
             r"entity_publication",
             r"representative_publications",
         ),
+    ),
+}
+
+
+GENOME_SYNC_PRESETS: dict[str, GenomeSyncPreset] = {
+    "mirna-fasta": GenomeSyncPreset(
+        name="mirna-fasta",
+        description="miRNA FASTA sequences for a genome build.",
+        section="fasta",
+        asset="mirna",
+    ),
+    "transcript-fasta": GenomeSyncPreset(
+        name="transcript-fasta",
+        description="Transcript FASTA sequences for a genome build.",
+        section="fasta",
+        asset="transcript",
+    ),
+    "translation-fasta": GenomeSyncPreset(
+        name="translation-fasta",
+        description="Protein translation FASTA sequences for a genome build.",
+        section="fasta",
+        asset="translation",
+    ),
+    "gene-fasta": GenomeSyncPreset(
+        name="gene-fasta",
+        description="Gene FASTA sequences for a genome build.",
+        section="fasta",
+        asset="gene",
+    ),
+    "chromosome-fasta": GenomeSyncPreset(
+        name="chromosome-fasta",
+        description="Chromosome FASTA sequences for a genome build.",
+        section="fasta",
+        asset="chromosome",
+    ),
+    "ncrna-fasta": GenomeSyncPreset(
+        name="ncrna-fasta",
+        description="ncRNA FASTA sequences for a genome build.",
+        section="fasta",
+        asset="ncrna",
+    ),
+    "gff-all": GenomeSyncPreset(
+        name="gff-all",
+        description="Primary GFF annotation file for a genome build.",
+        section="gff",
+        asset="gff",
+    ),
+    "gtf-all": GenomeSyncPreset(
+        name="gtf-all",
+        description="Primary GTF annotation file for a genome build.",
+        section="gtf",
+        asset="gtf",
     ),
 }

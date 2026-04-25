@@ -14,6 +14,7 @@ from .config import (
     DEFAULT_POSTGRES_DIR,
     DEFAULT_RELEASE,
     DEFAULT_ROOT,
+    GENOME_SYNC_PRESETS,
     GENOME_ASSET_PATTERNS,
     GENOME_SECTIONS,
     SYNC_PRESETS,
@@ -120,6 +121,22 @@ def cmd_presets(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_genome_presets(_: argparse.Namespace) -> int:
+    payload = [
+        {
+            "name": preset.name,
+            "description": preset.description,
+            "section": preset.section,
+            "asset": preset.asset,
+            "includes": list(preset.includes),
+            "excludes": list(preset.excludes),
+        }
+        for preset in GENOME_SYNC_PRESETS.values()
+    ]
+    print_json(payload)
+    return 0
+
+
 def cmd_sync(args: argparse.Namespace) -> int:
     preset = SYNC_PRESETS[args.preset]
     root = Path(args.root)
@@ -164,21 +181,27 @@ def cmd_sync_url(args: argparse.Namespace) -> int:
 def cmd_sync_genome(args: argparse.Namespace) -> int:
     root = Path(args.root)
     db_path = Path(args.db) if args.db else default_db_for_release(root, args.release)
+    preset = GENOME_SYNC_PRESETS.get(args.preset) if args.preset else None
     genome = find_genome(
         release=args.release,
         genome=args.genome,
         species=args.species,
     )
-    include = [*genome_asset_pattern(args.asset), *args.include]
-    url = genome_section_url(genome["url"], args.section)
+    section = preset.section if preset else args.section
+    asset = preset.asset if preset else args.asset
+    include = [*genome_asset_pattern(asset), *(preset.includes if preset else ()), *args.include]
+    exclude = [*(preset.excludes if preset else ()), *args.exclude]
+    url = genome_section_url(genome["url"], section)
     manifest = filter_manifest(
         build_manifest_from_url(url),
         include,
-        args.exclude,
+        exclude,
     )
-    default_name = f"{genome['label']}-{args.section}"
-    if args.asset:
-        default_name = f"{default_name}-{args.asset}"
+    default_name = f"{genome['label']}-{section}"
+    if preset:
+        default_name = f"{default_name}-{preset.name}"
+    elif asset:
+        default_name = f"{default_name}-{asset}"
     manifest_path = Path(args.manifest) if args.manifest else root / "manifests" / args.release / f"{default_name}.json"
     summary = sync_manifest(
         manifest,
@@ -190,8 +213,9 @@ def cmd_sync_genome(args: argparse.Namespace) -> int:
     )
     summary["release"] = args.release
     summary["genome"] = genome
-    summary["section"] = args.section
-    summary["asset"] = args.asset
+    summary["section"] = section
+    summary["asset"] = asset
+    summary["preset"] = args.preset
     summary["url"] = url
     summary["db_path"] = str(db_path)
     print_json(summary)
@@ -322,6 +346,9 @@ def build_parser() -> argparse.ArgumentParser:
     presets_parser = subparsers.add_parser("presets", help="list sync presets")
     presets_parser.set_defaults(func=cmd_presets)
 
+    genome_presets_parser = subparsers.add_parser("genome-presets", help="list genome sync presets")
+    genome_presets_parser.set_defaults(func=cmd_genome_presets)
+
     sync_parser = subparsers.add_parser("sync", help="manifest + download + ingest a preset")
     sync_parser.add_argument("preset", choices=sorted(SYNC_PRESETS))
     sync_parser.add_argument("--root", default=str(DEFAULT_ROOT))
@@ -347,6 +374,7 @@ def build_parser() -> argparse.ArgumentParser:
     sync_genome_parser.add_argument("--release", default=DEFAULT_RELEASE)
     sync_genome_parser.add_argument("--genome")
     sync_genome_parser.add_argument("--species")
+    sync_genome_parser.add_argument("--preset", choices=sorted(GENOME_SYNC_PRESETS))
     sync_genome_parser.add_argument("--section", choices=GENOME_SECTIONS, default="fasta")
     sync_genome_parser.add_argument("--asset", choices=sorted(GENOME_ASSET_PATTERNS))
     sync_genome_parser.add_argument("--root", default=str(DEFAULT_ROOT))
