@@ -520,6 +520,76 @@ def list_tables(db_path: Path, include_columns: bool = False) -> list[dict[str, 
         conn.close()
 
 
+def sample_column_values(
+    conn: sqlite3.Connection,
+    table_name: str,
+    column_name: str,
+    limit: int,
+) -> list[str]:
+    if limit <= 0:
+        return []
+    rows = conn.execute(
+        f'''
+        SELECT "{column_name}"
+        FROM "{table_name}"
+        WHERE "{column_name}" IS NOT NULL AND TRIM(CAST("{column_name}" AS TEXT)) != ''
+        LIMIT ?
+        ''',
+        (limit,),
+    ).fetchall()
+    return [str(row[0]) for row in rows]
+
+
+def describe_tables(
+    db_path: Path,
+    table_names: list[str] | None = None,
+    sample_values: int = 3,
+) -> list[dict[str, object]]:
+    conn = open_db(db_path)
+    ensure_registry(conn)
+    try:
+        selected = table_names or list_registry_table_names(conn)
+        descriptions: list[dict[str, object]] = []
+        for table_name in selected:
+            row = conn.execute(
+                """
+                SELECT source_path, row_count
+                FROM fb_ingest_registry
+                WHERE table_name = ?
+                """,
+                (table_name,),
+            ).fetchone()
+            if row is None:
+                continue
+            source_path, row_count = row
+            columns_meta = conn.execute(f'PRAGMA table_info("{table_name}")').fetchall()
+            columns = []
+            for meta in columns_meta:
+                column_name = meta[1]
+                columns.append(
+                    {
+                        "name": column_name,
+                        "sample_values": sample_column_values(
+                            conn,
+                            table_name,
+                            column_name,
+                            sample_values,
+                        ),
+                    }
+                )
+            descriptions.append(
+                {
+                    "table_name": table_name,
+                    "source_path": source_path,
+                    "row_count": row_count,
+                    "columns": columns,
+                }
+            )
+        return descriptions
+    finally:
+        conn.close()
+
+
 def run_query(db_path: Path, query: str) -> tuple[list[str], list[tuple[object, ...]]] | None:
     conn = open_db(db_path)
     try:

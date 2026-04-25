@@ -28,6 +28,7 @@ from .core import (
     find_genome,
     genome_asset_pattern,
     genome_section_url,
+    describe_tables,
     list_genomes,
     list_tables,
     load_manifest,
@@ -104,6 +105,17 @@ def cmd_sql(args: argparse.Namespace) -> int:
 
 def cmd_tables(args: argparse.Namespace) -> int:
     print_json(list_tables(Path(args.db), include_columns=args.columns))
+    return 0
+
+
+def cmd_describe(args: argparse.Namespace) -> int:
+    print_json(
+        describe_tables(
+            Path(args.db),
+            table_names=args.tables or None,
+            sample_values=args.sample_values,
+        )
+    )
     return 0
 
 
@@ -342,6 +354,12 @@ def build_parser() -> argparse.ArgumentParser:
     tables_parser.add_argument("--db", default=str(DEFAULT_DB))
     tables_parser.add_argument("--columns", action="store_true")
     tables_parser.set_defaults(func=cmd_tables)
+
+    describe_parser = subparsers.add_parser("describe", help="summarize ingested tables for query planning")
+    describe_parser.add_argument("--db", default=str(DEFAULT_DB))
+    describe_parser.add_argument("--tables", nargs="*")
+    describe_parser.add_argument("--sample-values", type=int, default=3)
+    describe_parser.set_defaults(func=cmd_describe)
 
     presets_parser = subparsers.add_parser("presets", help="list sync presets")
     presets_parser.set_defaults(func=cmd_presets)
