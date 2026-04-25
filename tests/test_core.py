@@ -21,7 +21,14 @@ from flybase_cli.core import (
     release_base_url,
     search_index,
 )
-from flybase_cli.loaders import ingest_delimited, ingest_fasta, ingest_feature_file, ingest_json, sanitize_columns
+from flybase_cli.loaders import (
+    flatten_json_record,
+    ingest_delimited,
+    ingest_fasta,
+    ingest_feature_file,
+    ingest_json,
+    sanitize_columns,
+)
 
 
 class FlybaseCoreTests(unittest.TestCase):
@@ -175,10 +182,22 @@ class FlybaseCoreTests(unittest.TestCase):
             try:
                 row_count = ingest_json(conn, source, "fb_json")
                 self.assertEqual(row_count, 2)
-                rows = conn.execute("select record_id from fb_json order by record_id").fetchall()
-                self.assertEqual(rows, [("FBgn1",), ("FBgn2",)])
+                rows = conn.execute("select record_id, symbol from fb_json order by record_id").fetchall()
+                self.assertEqual(rows, [("FBgn1", "gene1"), ("FBgn2", "gene2")])
             finally:
                 conn.close()
+
+    def test_flatten_json_record(self) -> None:
+        flattened = flatten_json_record(
+            {
+                "primaryId": "FBgn1",
+                "gene": {"geneId": "FBgn2", "symbol": "gene2"},
+                "publications": ["PMID:1"],
+            }
+        )
+        self.assertEqual(flattened["primaryId"], "FBgn1")
+        self.assertEqual(flattened["gene_geneId"], "FBgn2")
+        self.assertNotIn("publications", flattened)
 
     def test_ingest_no_header(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

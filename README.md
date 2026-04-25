@@ -50,6 +50,8 @@ python3 flybase_cli.py fts-build
 
 python3 flybase_cli.py search 'memory formation'
 
+python3 flybase_cli.py pg-load --release FB2026_01
+
 python3 flybase_cli.py sql \
   "select * from fb_best_gene_summary_fb_2026_01 limit 5"
 
@@ -76,6 +78,12 @@ python3 flybase_cli.py api domain/FBgn0001250
 - annotation: `gff`, `gff3`, `gtf`, gzipped variants
 - JSON: `json`, `json.gz`
 
+## JSON ingest
+
+- top-level scalar JSON fields become queryable SQLite columns
+- one nested dict level is flattened, eg `gene.symbol` -> `gene_symbol`
+- full source record remains in `payload_json`
+
 ## Search
 
 - `fts-build` creates a local SQLite FTS5 index from ingested tables
@@ -90,6 +98,8 @@ python3 flybase_cli.py api domain/FBgn0001250
 - `sync --release FB2026_01` defaults to `data/flybase/FB2026_01.sqlite` to avoid cross-release mixing.
 - `manifest --url` lets you crawl non-`releases/` FlyBase directories such as genome FASTA/GFF trees.
 - some FlyBase `.gff.gz` assets are tar-wrapped gzip archives; loader handles that transparently.
+- `pg-load` stages the full Postgres import script for `releases/<release>/psql/<release>.sql.gz`.
+- `pg-load --execute` runs the staged script when `createdb` and `psql` are installed locally.
 - SQLite keeps setup minimal; switch to DuckDB/Postgres if you want bigger joins/faster scans.
 - if you only need a few IDs, FlyBase Batch Download may be simpler than syncing files.
 - use `--no-header` for files whose first non-comment row is data, not column names.
