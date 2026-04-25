@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import gzip
+import json
 import sqlite3
 import sys
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,14 +13,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from flybase_cli.config import SYNC_PRESETS
 from flybase_cli.core import (
-    ingest_delimited,
+    build_manifest_from_url,
     normalize_bucket_href,
     open_db,
+    path_from_root_url,
     rebuild_search_index,
     release_base_url,
-    sanitize_columns,
     search_index,
 )
+from flybase_cli.loaders import ingest_delimited, ingest_fasta, ingest_feature_file, ingest_json, sanitize_columns
 
 
 class FlybaseCoreTests(unittest.TestCase):
@@ -32,6 +35,15 @@ class FlybaseCoreTests(unittest.TestCase):
         self.assertEqual(
             release_base_url("FB2026_01"),
             "https://s3ftp.flybase.org/releases/FB2026_01/",
+        )
+
+    def test_path_from_root_url(self) -> None:
+        self.assertEqual(
+            path_from_root_url(
+                "https://s3ftp.flybase.org/genomes/Drosophila_melanogaster/dmel_r6.67_FB2026_01/fasta/",
+                "https://s3ftp.flybase.org/genomes/Drosophila_melanogaster/dmel_r6.67_FB2026_01/fasta/dmel-all-miRNA-r6.67.fasta.gz",
+            ),
+            "dmel-all-miRNA-r6.67.fasta.gz",
         )
 
     def test_sanitize_columns(self) -> None:
@@ -69,6 +81,105 @@ class FlybaseCoreTests(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_ingest_fasta(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            source = tmp / "mirna.fasta.gz"
+            source.write_bytes(
+                gzip.compress(
+                    (
+                        ">FBtr1 first record\n"
+                        "ACGT\n"
+                        "TTAA\n"
+                        ">FBtr2\n"
+                        "GGCC\n"
+                    ).encode("utf-8")
+                )
+            )
+            conn = sqlite3.connect(":memory:")
+            try:
+                row_count = ingest_fasta(conn, source, "fb_mirna")
+                self.assertEqual(row_count, 2)
+                rows = conn.execute(
+                    "select record_id, description, sequence, sequence_length from fb_mirna order by record_id"
+                ).fetchall()
+                self.assertEqual(
+                    rows,
+                    [("FBtr1", "first record", "ACGTTTAA", "8"), ("FBtr2", "", "GGCC", "4")],
+                )
+            finally:
+                conn.close()
+
+    def test_ingest_feature_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            source = tmp / "mini.gff"
+            source.write_text(
+                "##gff-version 3\n"
+                "2L\tFlyBase\tgene\t7529\t9484\t.\t+\t.\tID=FBgn0002121;Name=amx\n"
+                "2L\tFlyBase\tmRNA\t7529\t9484\t.\t+\t.\tID=FBtr1;Parent=FBgn0002121;Name=amx-RA\n",
+                encoding="utf-8",
+            )
+            conn = sqlite3.connect(":memory:")
+            try:
+                row_count = ingest_feature_file(conn, source, "fb_gff")
+                self.assertEqual(row_count, 2)
+                rows = conn.execute(
+                    "select feature_type, feature_id, parent_id, feature_name from fb_gff order by feature_type"
+                ).fetchall()
+                self.assertEqual(
+                    rows,
+                    [("gene", "FBgn0002121", "", "amx"), ("mRNA", "FBtr1", "FBgn0002121", "amx-RA")],
+                )
+            finally:
+                conn.close()
+
+    def test_ingest_feature_file_from_tar_gz(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            inner = tmp / "mini.gff"
+            archive_path = tmp / "mini.gff.gz"
+            inner.write_text(
+                "##gff-version 3\n"
+                "2L\tFlyBase\tgene\t7529\t9484\t.\t+\t.\tID=FBgn0002121;Name=amx\n",
+                encoding="utf-8",
+            )
+            with tarfile.open(archive_path, "w:gz") as archive:
+                archive.add(inner, arcname="mini.gff")
+            conn = sqlite3.connect(":memory:")
+            try:
+                row_count = ingest_feature_file(conn, archive_path, "fb_gff_archive")
+                self.assertEqual(row_count, 1)
+                row = conn.execute(
+                    "select feature_type, feature_id, feature_name from fb_gff_archive"
+                ).fetchone()
+                self.assertEqual(row, ("gene", "FBgn0002121", "amx"))
+            finally:
+                conn.close()
+
+    def test_ingest_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            source = tmp / "genes.json.gz"
+            source.write_bytes(
+                gzip.compress(
+                    json.dumps(
+                        [
+                            {"primaryId": "FBgn1", "symbol": "gene1"},
+                            {"primaryId": "FBgn2", "symbol": "gene2"},
+                        ]
+                    ).encode("utf-8")
+                )
+            )
+            conn = sqlite3.connect(":memory:")
+            try:
+                row_count = ingest_json(conn, source, "fb_json")
+                self.assertEqual(row_count, 2)
+                rows = conn.execute("select record_id from fb_json order by record_id").fetchall()
+                self.assertEqual(rows, [("FBgn1",), ("FBgn2",)])
+            finally:
+                conn.close()
+
     def test_ingest_no_header(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
@@ -86,6 +197,15 @@ class FlybaseCoreTests(unittest.TestCase):
     def test_sync_presets_shape(self) -> None:
         self.assertIn("gene-core", SYNC_PRESETS)
         self.assertTrue(SYNC_PRESETS["gene-core"].includes)
+
+    def test_build_manifest_from_url_rejects_outside_root(self) -> None:
+        self.assertEqual(
+            path_from_root_url(
+                "https://s3ftp.flybase.org/releases/FB2026_01/precomputed_files/genes/",
+                "https://example.com/other/file.tsv.gz",
+            ),
+            "",
+        )
 
     def test_search_index(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

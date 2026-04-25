@@ -35,6 +35,10 @@ python3 flybase_cli.py sync gene-core --release FB2026_01
 
 PYTHONPATH=src python3 -m flybase_cli sync gene-expression
 
+python3 flybase_cli.py manifest \
+  --url https://s3ftp.flybase.org/genomes/Drosophila_melanogaster/dmel_r6.67_FB2026_01/fasta/ \
+  --include 'miRNA'
+
 python3 flybase_cli.py ingest \
   data/flybase/precomputed_files/genes/best_gene_summary_fb_2026_01.tsv.gz \
   data/flybase/precomputed_files/genes/fbgn_fbtr_fbpp_fb_2026_01.tsv.gz \
@@ -65,6 +69,13 @@ python3 flybase_cli.py api domain/FBgn0001250
 - `gene-expression`: curated/high-throughput/scRNA expression slices
 - `references`: publication/link tables
 
+## Ingest formats
+
+- delimited: `tsv`, `csv`, gzipped variants
+- sequence: `fasta`, `fa`, `fna`, `faa`, gzipped variants
+- annotation: `gff`, `gff3`, `gtf`, gzipped variants
+- JSON: `json`, `json.gz`
+
 ## Search
 
 - `fts-build` creates a local SQLite FTS5 index from ingested tables
@@ -77,6 +88,8 @@ python3 flybase_cli.py api domain/FBgn0001250
 - many FlyBase files start with `##` metadata lines; loader skips those.
 - `sync` writes a preset manifest under `data/flybase/manifests/<release>/`.
 - `sync --release FB2026_01` defaults to `data/flybase/FB2026_01.sqlite` to avoid cross-release mixing.
+- `manifest --url` lets you crawl non-`releases/` FlyBase directories such as genome FASTA/GFF trees.
+- some FlyBase `.gff.gz` assets are tar-wrapped gzip archives; loader handles that transparently.
 - SQLite keeps setup minimal; switch to DuckDB/Postgres if you want bigger joins/faster scans.
 - if you only need a few IDs, FlyBase Batch Download may be simpler than syncing files.
 - use `--no-header` for files whose first non-comment row is data, not column names.
