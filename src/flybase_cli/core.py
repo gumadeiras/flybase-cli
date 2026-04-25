@@ -8,7 +8,14 @@ import urllib.request
 from html.parser import HTMLParser
 from pathlib import Path
 
-from .config import BASE_RELEASES, BATCH_SIZE, SEARCH_ID_CANDIDATES, SyncPreset
+from .config import (
+    BASE_RELEASES,
+    BATCH_SIZE,
+    GENOME_ASSET_PATTERNS,
+    GENOME_SECTIONS,
+    SEARCH_ID_CANDIDATES,
+    SyncPreset,
+)
 from .loaders import ingest_source, is_ingestable
 
 
@@ -229,6 +236,49 @@ def list_genomes(release: str = "current") -> list[dict[str, str]]:
     links = scrape_links(release_base_url(release))
     genomes = extract_genomes(links)
     return sorted(genomes, key=lambda item: (item["species"], item["genome_build"]))
+
+
+def find_genome(
+    *,
+    release: str,
+    genome: str | None = None,
+    species: str | None = None,
+) -> dict[str, str]:
+    genomes = list_genomes(release)
+    normalized_genome = genome.lower() if genome else None
+    normalized_species = species.lower() if species else None
+
+    matches: list[dict[str, str]] = []
+    for item in genomes:
+        label = item["label"].lower()
+        build = item["genome_build"].lower()
+        species_name = item["species"].lower()
+        genome_ok = normalized_genome is None or normalized_genome in {label, build}
+        species_ok = normalized_species is None or normalized_species in {species_name, label}
+        if genome_ok and species_ok:
+            matches.append(item)
+
+    if not matches:
+        raise ValueError("no genome matched the requested release/species/build")
+    if len(matches) > 1:
+        joined = ", ".join(match["label"] for match in matches[:10])
+        raise ValueError(f"multiple genomes matched: {joined}")
+    return matches[0]
+
+
+def genome_section_url(genome_url: str, section: str) -> str:
+    if section not in GENOME_SECTIONS:
+        raise ValueError(f"unsupported genome section: {section}")
+    return urllib.parse.urljoin(normalize_crawl_url(genome_url), f"{section}/")
+
+
+def genome_asset_pattern(asset: str | None) -> list[str]:
+    if not asset:
+        return []
+    pattern = GENOME_ASSET_PATTERNS.get(asset.lower())
+    if pattern is None:
+        raise ValueError(f"unknown genome asset preset: {asset}")
+    return [pattern]
 
 
 def write_json(path: Path, payload: object) -> None:

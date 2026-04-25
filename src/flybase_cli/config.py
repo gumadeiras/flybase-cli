@@ -48,6 +48,19 @@ JSON_ID_CANDIDATES = (
     "name",
 )
 JSON_MAX_INFERRED_COLUMNS = 24
+GENOME_SECTIONS = ("fasta", "gff", "gtf", "dna", "chado-xml")
+GENOME_ASSET_PATTERNS = {
+    "mirna": r"miRNA",
+    "transcript": r"transcript",
+    "translation": r"translation",
+    "gene": r"all-gene-",
+    "gene-extended": r"gene_extended2000",
+    "chromosome": r"chromosome",
+    "cds": r"CDS",
+    "ncrna": r"ncRNA",
+    "gff": r"\.gff(\.gz)?$",
+    "gtf": r"\.gtf(\.gz)?$",
+}
 
 
 @dataclass(frozen=True)

@@ -14,6 +14,8 @@ from .config import (
     DEFAULT_POSTGRES_DIR,
     DEFAULT_RELEASE,
     DEFAULT_ROOT,
+    GENOME_ASSET_PATTERNS,
+    GENOME_SECTIONS,
     SYNC_PRESETS,
 )
 from .core import (
@@ -22,6 +24,9 @@ from .core import (
     fetch_bytes,
     filter_manifest,
     ingest_files,
+    find_genome,
+    genome_asset_pattern,
+    genome_section_url,
     list_genomes,
     list_tables,
     load_manifest,
@@ -151,6 +156,43 @@ def cmd_sync_url(args: argparse.Namespace) -> int:
         no_header=args.no_header,
     )
     summary["url"] = args.url
+    summary["db_path"] = str(db_path)
+    print_json(summary)
+    return 0
+
+
+def cmd_sync_genome(args: argparse.Namespace) -> int:
+    root = Path(args.root)
+    db_path = Path(args.db) if args.db else default_db_for_release(root, args.release)
+    genome = find_genome(
+        release=args.release,
+        genome=args.genome,
+        species=args.species,
+    )
+    include = [*genome_asset_pattern(args.asset), *args.include]
+    url = genome_section_url(genome["url"], args.section)
+    manifest = filter_manifest(
+        build_manifest_from_url(url),
+        include,
+        args.exclude,
+    )
+    default_name = f"{genome['label']}-{args.section}"
+    if args.asset:
+        default_name = f"{default_name}-{args.asset}"
+    manifest_path = Path(args.manifest) if args.manifest else root / "manifests" / args.release / f"{default_name}.json"
+    summary = sync_manifest(
+        manifest,
+        root=root,
+        db_path=db_path,
+        manifest_path=manifest_path,
+        force=args.force,
+        no_header=args.no_header,
+    )
+    summary["release"] = args.release
+    summary["genome"] = genome
+    summary["section"] = args.section
+    summary["asset"] = args.asset
+    summary["url"] = url
     summary["db_path"] = str(db_path)
     print_json(summary)
     return 0
@@ -300,6 +342,21 @@ def build_parser() -> argparse.ArgumentParser:
     sync_url_parser.add_argument("--force", action="store_true")
     sync_url_parser.add_argument("--no-header", action="store_true")
     sync_url_parser.set_defaults(func=cmd_sync_url)
+
+    sync_genome_parser = subparsers.add_parser("sync-genome", help="discover a genome build and sync one genome asset section")
+    sync_genome_parser.add_argument("--release", default=DEFAULT_RELEASE)
+    sync_genome_parser.add_argument("--genome")
+    sync_genome_parser.add_argument("--species")
+    sync_genome_parser.add_argument("--section", choices=GENOME_SECTIONS, default="fasta")
+    sync_genome_parser.add_argument("--asset", choices=sorted(GENOME_ASSET_PATTERNS))
+    sync_genome_parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    sync_genome_parser.add_argument("--db")
+    sync_genome_parser.add_argument("--manifest")
+    sync_genome_parser.add_argument("--include", action="append", default=[])
+    sync_genome_parser.add_argument("--exclude", action="append", default=[])
+    sync_genome_parser.add_argument("--force", action="store_true")
+    sync_genome_parser.add_argument("--no-header", action="store_true")
+    sync_genome_parser.set_defaults(func=cmd_sync_genome)
 
     release_parser = subparsers.add_parser("release-url", help="show the bulk-data base URL for a release")
     release_parser.add_argument("--release", default=DEFAULT_RELEASE)
