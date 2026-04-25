@@ -65,6 +65,8 @@ python3 flybase_cli.py ingest \
 
 python3 flybase_cli.py tables --columns
 
+python3 flybase_cli.py describe --sample-values 2
+
 python3 flybase_cli.py fts-build
 
 python3 flybase_cli.py search 'memory formation'
@@ -135,6 +137,11 @@ python3 flybase_cli.py sql \
 - `fts-build` creates a local SQLite FTS5 index from ingested tables
 - `search` queries that index without calling the live FlyBase API
 - record ids prefer stable FlyBase-like columns such as `fbgn_id`, `primary_fbgn`, `flybase_fbtr`
+
+## Metadata
+
+- `describe` summarizes ingested tables with row counts, source paths, columns, and representative non-empty values
+- useful first step before writing ad hoc SQL or building agent query plans
 
 ## Notes
 

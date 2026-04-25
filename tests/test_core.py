@@ -15,6 +15,7 @@ from flybase_cli.config import GENOME_SYNC_PRESETS, SYNC_PRESETS
 from flybase_cli.core import (
     extract_genomes,
     build_manifest_from_url,
+    describe_tables,
     find_genome,
     genome_asset_pattern,
     genome_section_url,
@@ -427,8 +428,56 @@ class FlybaseCoreTests(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_describe_tables(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "flybase.sqlite"
+            conn = open_db(db_path)
+            try:
+                conn.execute(
+                    """
+                    CREATE TABLE fb_example (
+                        record_id TEXT,
+                        symbol TEXT,
+                        payload_json TEXT
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE fb_ingest_registry (
+                        source_path TEXT NOT NULL,
+                        table_name TEXT NOT NULL,
+                        row_count INTEGER NOT NULL,
+                        PRIMARY KEY (source_path, table_name)
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO fb_example VALUES
+                    ('FBgn1', 'gene1', '{"a":1}'),
+                    ('FBgn2', 'gene2', '{"a":2}')
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO fb_ingest_registry VALUES
+                    ('/tmp/example.tsv.gz', 'fb_example', 2)
+                    """
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            described = describe_tables(db_path, sample_values=2)
+            self.assertEqual(described[0]["table_name"], "fb_example")
+            self.assertEqual(described[0]["row_count"], 2)
+            columns = {column["name"]: column["sample_values"] for column in described[0]["columns"]}
+            self.assertEqual(columns["record_id"], ["FBgn1", "FBgn2"])
+            self.assertEqual(columns["symbol"], ["gene1", "gene2"])
+
             summary = list_tables(db_path)
-            self.assertEqual(summary[0]["table_name"], "fb_json")
+            self.assertEqual(summary[0]["table_name"], "fb_example")
 
             conn = open_db(db_path)
             try:
