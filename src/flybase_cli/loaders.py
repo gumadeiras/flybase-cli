@@ -370,6 +370,18 @@ def sanitize_json_child_name(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_]+", "_", name).strip("_").lower()
 
 
+def json_parent_ordinal_columns(depth: int) -> list[str]:
+    if depth <= 0:
+        return []
+    if depth == 1:
+        return ["parent_ordinal"]
+    return [*(f"ancestor_ordinal_{index}" for index in range(1, depth)), "parent_ordinal"]
+
+
+def json_link_columns(parent_ordinals: list[str]) -> list[str]:
+    return ["parent_record_id", *json_parent_ordinal_columns(len(parent_ordinals)), "ordinal"]
+
+
 def discover_json_list_fields(records: list[dict[str, object]]) -> dict[str, dict[str, object]]:
     discovered: dict[str, dict[str, object]] = {}
     for record in records[:200]:
@@ -403,19 +415,23 @@ def discover_json_list_fields(records: list[dict[str, object]]) -> dict[str, dic
 def ingest_json_child_tables(
     conn: sqlite3.Connection,
     parent_table_name: str,
-    records: list[dict[str, object]],
+    parent_rows: list[tuple[str, list[str], dict[str, object]]],
 ) -> list[tuple[str, int]]:
+    if not parent_rows:
+        return []
+
+    records = [record for _, _, record in parent_rows]
     list_fields = discover_json_list_fields(records)
     ingested: list[tuple[str, int]] = []
 
     for field_name, field_info in list_fields.items():
         child_table_name = f"{parent_table_name}_{sanitize_json_child_name(field_name)}"
         kind = field_info["kind"]
+        link_columns = json_link_columns(parent_rows[0][1])
         if kind == "scalar":
-            insert_sql = create_table(conn, child_table_name, ["parent_record_id", "ordinal", "value"])
-            batch: list[tuple[str, str, str]] = []
-            for index, record in enumerate(records, start=1):
-                record_id = pick_json_record_id(record, index)
+            insert_sql = create_table(conn, child_table_name, [*link_columns, "value"])
+            batch: list[tuple[str, ...]] = []
+            for record_id, parent_ordinals, record in parent_rows:
                 values = record.get(field_name)
                 if not isinstance(values, list):
                     continue
@@ -423,17 +439,17 @@ def ingest_json_child_tables(
                     scalar = json_scalar_to_text(item)
                     if scalar is None:
                         continue
-                    batch.append((record_id, str(ordinal), scalar))
+                    batch.append(tuple([record_id, *parent_ordinals, str(ordinal), scalar]))
             conn.executemany(insert_sql, batch)
             ingested.append((child_table_name, len(batch)))
             continue
 
         if kind == "dict":
-            columns = ["parent_record_id", "ordinal", *field_info["columns"], "payload_json"]
+            columns = [*link_columns, *field_info["columns"], "payload_json"]
             insert_sql = create_table(conn, child_table_name, columns)
             batch: list[tuple[str, ...]] = []
-            for index, record in enumerate(records, start=1):
-                record_id = pick_json_record_id(record, index)
+            child_rows: list[tuple[str, list[str], dict[str, object]]] = []
+            for record_id, parent_ordinals, record in parent_rows:
                 values = record.get(field_name)
                 if not isinstance(values, list):
                     continue
@@ -441,12 +457,14 @@ def ingest_json_child_tables(
                     if not isinstance(item, dict):
                         continue
                     flattened = flatten_json_record(item)
-                    row = [record_id, str(ordinal)]
+                    row = [record_id, *parent_ordinals, str(ordinal)]
                     row.extend(flattened.get(column, "") for column in field_info["columns"])
                     row.append(json.dumps(item, sort_keys=True))
                     batch.append(tuple(row))
+                    child_rows.append((record_id, [*parent_ordinals, str(ordinal)], item))
             conn.executemany(insert_sql, batch)
             ingested.append((child_table_name, len(batch)))
+            ingested.extend(ingest_json_child_tables(conn, child_table_name, child_rows))
 
     return ingested
 
@@ -474,7 +492,13 @@ def ingest_json(conn: sqlite3.Connection, source: Path, table_name: str) -> list
         batch.append(tuple(row))
     conn.executemany(insert_sql, batch)
     ingested = [(table_name, len(batch))]
-    ingested.extend(ingest_json_child_tables(conn, table_name, records))
+    ingested.extend(
+        ingest_json_child_tables(
+            conn,
+            table_name,
+            [(pick_json_record_id(record, index), [], record) for index, record in enumerate(records, start=1)],
+        )
+    )
     return ingested
 
 

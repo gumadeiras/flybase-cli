@@ -303,6 +303,54 @@ class FlybaseCoreTests(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_ingest_json_nested_list_children(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            source = tmp / "genes.json.gz"
+            source.write_bytes(
+                gzip.compress(
+                    json.dumps(
+                        [
+                            {
+                                "primaryId": "FBgn1",
+                                "symbol": "gene1",
+                                "genomeLocations": [
+                                    {
+                                        "assembly": "R6",
+                                        "chromosome": "2L",
+                                        "exons": [
+                                            {"startPosition": 10, "endPosition": 20},
+                                            {"startPosition": 30, "endPosition": 40},
+                                        ],
+                                    }
+                                ],
+                            }
+                        ]
+                    ).encode("utf-8")
+                )
+            )
+            conn = sqlite3.connect(":memory:")
+            try:
+                tables = ingest_json(conn, source, "fb_json")
+                self.assertEqual(
+                    tables,
+                    [
+                        ("fb_json", 1),
+                        ("fb_json_genomelocations", 1),
+                        ("fb_json_genomelocations_exons", 2),
+                    ],
+                )
+                exons = conn.execute(
+                    """
+                    select parent_record_id, parent_ordinal, ordinal, startPosition, endPosition
+                    from fb_json_genomelocations_exons
+                    order by ordinal
+                    """
+                ).fetchall()
+                self.assertEqual(exons, [("FBgn1", "1", "1", "10", "20"), ("FBgn1", "1", "2", "30", "40")])
+            finally:
+                conn.close()
+
     def test_flatten_json_record(self) -> None:
         flattened = flatten_json_record(
             {
