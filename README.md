@@ -31,6 +31,8 @@ python3 flybase_cli.py presets
 
 python3 flybase_cli.py sync gene-core
 
+python3 flybase_cli.py sync gene-core --release FB2026_01
+
 PYTHONPATH=src python3 -m flybase_cli sync gene-expression
 
 python3 flybase_cli.py ingest \
@@ -39,6 +41,10 @@ python3 flybase_cli.py ingest \
   data/flybase/precomputed_files/genes/fbgn_annotation_ID_fb_2026_01.tsv.gz
 
 python3 flybase_cli.py tables --columns
+
+python3 flybase_cli.py fts-build
+
+python3 flybase_cli.py search 'memory formation'
 
 python3 flybase_cli.py sql \
   "select * from fb_best_gene_summary_fb_2026_01 limit 5"
@@ -59,11 +65,18 @@ python3 flybase_cli.py api domain/FBgn0001250
 - `gene-expression`: curated/high-throughput/scRNA expression slices
 - `references`: publication/link tables
 
+## Search
+
+- `fts-build` creates a local SQLite FTS5 index from ingested tables
+- `search` queries that index without calling the live FlyBase API
+- record ids prefer stable FlyBase-like columns such as `fbgn_id`, `primary_fbgn`, `flybase_fbtr`
+
 ## Notes
 
 - ingest path assumes delimited `tsv/csv` files only.
 - many FlyBase files start with `##` metadata lines; loader skips those.
-- `sync` writes a preset manifest under `data/flybase/manifests/`.
+- `sync` writes a preset manifest under `data/flybase/manifests/<release>/`.
+- `sync --release FB2026_01` defaults to `data/flybase/FB2026_01.sqlite` to avoid cross-release mixing.
 - SQLite keeps setup minimal; switch to DuckDB/Postgres if you want bigger joins/faster scans.
 - if you only need a few IDs, FlyBase Batch Download may be simpler than syncing files.
 - use `--no-header` for files whose first non-comment row is data, not column names.

@@ -10,14 +10,28 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from flybase_cli.config import SYNC_PRESETS
-from flybase_cli.core import ingest_delimited, normalize_bucket_href, sanitize_columns
+from flybase_cli.core import (
+    ingest_delimited,
+    normalize_bucket_href,
+    open_db,
+    rebuild_search_index,
+    release_base_url,
+    sanitize_columns,
+    search_index,
+)
 
 
 class FlybaseCoreTests(unittest.TestCase):
     def test_normalize_bucket_href(self) -> None:
         self.assertEqual(
-            normalize_bucket_href("/releases/current/precomputed_files/genes/foo.tsv.gz"),
+            normalize_bucket_href("/releases/current/precomputed_files/genes/foo.tsv.gz", "current"),
             "precomputed_files/genes/foo.tsv.gz",
+        )
+
+    def test_release_base_url(self) -> None:
+        self.assertEqual(
+            release_base_url("FB2026_01"),
+            "https://s3ftp.flybase.org/releases/FB2026_01/",
         )
 
     def test_sanitize_columns(self) -> None:
@@ -72,6 +86,51 @@ class FlybaseCoreTests(unittest.TestCase):
     def test_sync_presets_shape(self) -> None:
         self.assertIn("gene-core", SYNC_PRESETS)
         self.assertTrue(SYNC_PRESETS["gene-core"].includes)
+
+    def test_search_index(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "flybase.sqlite"
+            conn = open_db(db_path)
+            try:
+                conn.execute(
+                    """
+                    CREATE TABLE fb_best_gene_summary_fb_2026_01 (
+                        fbgn_id TEXT,
+                        gene_symbol TEXT,
+                        summary TEXT
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE fb_ingest_registry (
+                        source_path TEXT PRIMARY KEY,
+                        table_name TEXT NOT NULL,
+                        row_count INTEGER NOT NULL
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO fb_best_gene_summary_fb_2026_01 VALUES
+                    ('FBgn1', 'Nep3', 'memory formation protein'),
+                    ('FBgn2', 'Or19b', 'odorant receptor')
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO fb_ingest_registry VALUES
+                    ('/tmp/a.tsv.gz', 'fb_best_gene_summary_fb_2026_01', 2)
+                    """
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            indexed = rebuild_search_index(db_path)
+            self.assertEqual(indexed[0]["row_count"], 2)
+            results = search_index(db_path, "memory")
+            self.assertEqual(results[0]["record_id"], "FBgn1")
 
 
 if __name__ == "__main__":

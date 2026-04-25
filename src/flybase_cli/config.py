@@ -4,13 +4,24 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-BASE_BUCKET = "https://s3ftp.flybase.org/releases/current/"
+BASE_RELEASES = "https://s3ftp.flybase.org/releases/"
 BASE_API = "https://api.flybase.org/api/v1.0/"
+DEFAULT_RELEASE = "current"
 DEFAULT_ROOT = Path("data/flybase")
 DEFAULT_DB = DEFAULT_ROOT / "flybase.sqlite"
 DEFAULT_MANIFEST = DEFAULT_ROOT / "manifest.json"
 BATCH_SIZE = 1000
 INGEST_SUFFIXES = (".tsv", ".csv", ".tsv.gz", ".csv.gz")
+SEARCH_ID_CANDIDATES = (
+    "fbgn_id",
+    "primary_fbgn",
+    "flybase_fbgn",
+    "gene_primary_id",
+    "annotation_id",
+    "gene_symbol",
+    "flybase_fbtr",
+    "flybase_fbpp",
+)
 
 
 @dataclass(frozen=True)

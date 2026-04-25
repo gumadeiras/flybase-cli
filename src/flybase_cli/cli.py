@@ -7,7 +7,14 @@ import urllib.error
 import urllib.parse
 from pathlib import Path
 
-from .config import BASE_API, DEFAULT_DB, DEFAULT_MANIFEST, DEFAULT_ROOT, SYNC_PRESETS
+from .config import (
+    BASE_API,
+    DEFAULT_DB,
+    DEFAULT_MANIFEST,
+    DEFAULT_RELEASE,
+    DEFAULT_ROOT,
+    SYNC_PRESETS,
+)
 from .core import (
     build_manifest,
     fetch_bytes,
@@ -15,7 +22,10 @@ from .core import (
     ingest_files,
     list_tables,
     load_manifest,
+    rebuild_search_index,
+    release_base_url,
     run_query,
+    search_index,
     sync_preset,
     write_json,
 )
@@ -25,8 +35,18 @@ def print_json(payload: object) -> None:
     print(json.dumps(payload, indent=2))
 
 
+def default_manifest_for_release(root: Path, preset: str, release: str) -> Path:
+    return root / "manifests" / release / f"{preset}.json"
+
+
+def default_db_for_release(root: Path, release: str) -> Path:
+    if release == DEFAULT_RELEASE:
+        return root / DEFAULT_DB.name
+    return root / f"{release}.sqlite"
+
+
 def cmd_manifest(args: argparse.Namespace) -> int:
-    manifest = build_manifest(args.prefix)
+    manifest = build_manifest(args.prefix, release=args.release)
     filtered = filter_manifest(manifest, args.include, args.exclude)
     write_json(Path(args.output), filtered)
     print(f"{len(filtered)} files -> {args.output}")
@@ -85,14 +105,17 @@ def cmd_presets(_: argparse.Namespace) -> int:
 def cmd_sync(args: argparse.Namespace) -> int:
     preset = SYNC_PRESETS[args.preset]
     root = Path(args.root)
-    manifest_path = Path(args.manifest or root / "manifests" / f"{preset.name}.json")
+    manifest_path = Path(args.manifest or default_manifest_for_release(root, preset.name, args.release))
+    db_path = Path(args.db) if args.db else default_db_for_release(root, args.release)
     summary = sync_preset(
         preset=preset,
         root=root,
-        db_path=Path(args.db),
+        db_path=db_path,
         manifest_path=manifest_path,
+        release=args.release,
         force=args.force,
     )
+    summary["db_path"] = str(db_path)
     print_json(summary)
     return 0
 
@@ -115,12 +138,35 @@ def cmd_api(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_release_url(args: argparse.Namespace) -> int:
+    print_json({"release": args.release, "base_url": release_base_url(args.release)})
+    return 0
+
+
+def cmd_fts_build(args: argparse.Namespace) -> int:
+    indexed = rebuild_search_index(Path(args.db), table_names=args.tables or None)
+    print_json(indexed)
+    return 0
+
+
+def cmd_search(args: argparse.Namespace) -> int:
+    results = search_index(
+        Path(args.db),
+        query=args.query,
+        limit=args.limit,
+        table_name=args.table,
+    )
+    print_json(results)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="FlyBase sync/query helper for agents.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     manifest_parser = subparsers.add_parser("manifest", help="scrape a file manifest")
     manifest_parser.add_argument("--prefix", default="precomputed_files/genes/")
+    manifest_parser.add_argument("--release", default=DEFAULT_RELEASE)
     manifest_parser.add_argument("--include", action="append", default=[])
     manifest_parser.add_argument("--exclude", action="append", default=[])
     manifest_parser.add_argument("--output", default=str(DEFAULT_MANIFEST))
@@ -157,10 +203,27 @@ def build_parser() -> argparse.ArgumentParser:
     sync_parser = subparsers.add_parser("sync", help="manifest + download + ingest a preset")
     sync_parser.add_argument("preset", choices=sorted(SYNC_PRESETS))
     sync_parser.add_argument("--root", default=str(DEFAULT_ROOT))
-    sync_parser.add_argument("--db", default=str(DEFAULT_DB))
+    sync_parser.add_argument("--db")
+    sync_parser.add_argument("--release", default=DEFAULT_RELEASE)
     sync_parser.add_argument("--manifest")
     sync_parser.add_argument("--force", action="store_true")
     sync_parser.set_defaults(func=cmd_sync)
+
+    release_parser = subparsers.add_parser("release-url", help="show the bulk-data base URL for a release")
+    release_parser.add_argument("--release", default=DEFAULT_RELEASE)
+    release_parser.set_defaults(func=cmd_release_url)
+
+    fts_build_parser = subparsers.add_parser("fts-build", help="build a local full-text index")
+    fts_build_parser.add_argument("--db", default=str(DEFAULT_DB))
+    fts_build_parser.add_argument("--tables", nargs="*")
+    fts_build_parser.set_defaults(func=cmd_fts_build)
+
+    search_parser = subparsers.add_parser("search", help="search the local full-text index")
+    search_parser.add_argument("query")
+    search_parser.add_argument("--db", default=str(DEFAULT_DB))
+    search_parser.add_argument("--table")
+    search_parser.add_argument("--limit", type=int, default=20)
+    search_parser.set_defaults(func=cmd_search)
 
     api_parser = subparsers.add_parser("api", help="call the FlyBase HTTP API")
     api_parser.add_argument("endpoint")

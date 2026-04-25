@@ -11,7 +11,13 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Iterator
 
-from .config import BASE_BUCKET, BATCH_SIZE, INGEST_SUFFIXES, SyncPreset
+from .config import (
+    BASE_RELEASES,
+    BATCH_SIZE,
+    INGEST_SUFFIXES,
+    SEARCH_ID_CANDIDATES,
+    SyncPreset,
+)
 
 
 class DirectoryIndexParser(HTMLParser):
@@ -37,36 +43,43 @@ def fetch_bytes(url: str) -> bytes:
         return response.read()
 
 
+def release_base_url(release: str) -> str:
+    normalized = release.strip("/")
+    return urllib.parse.urljoin(BASE_RELEASES, f"{normalized}/")
+
+
 def normalize_path(path: str) -> str:
     return path.lstrip("/")
 
 
-def normalize_bucket_href(href: str) -> str:
+def normalize_bucket_href(href: str, release: str) -> str:
     clean = href.split("?", 1)[0]
-    if clean.startswith("/releases/current/"):
-        clean = clean[len("/releases/current/") :]
+    release_prefix = f"/releases/{release.strip('/')}/"
+    if clean.startswith(release_prefix):
+        clean = clean[len(release_prefix) :]
     return normalize_path(clean)
 
 
-def scrape_index(url: str) -> list[str]:
+def scrape_index(url: str, release: str) -> list[str]:
     parser = DirectoryIndexParser()
     parser.feed(fetch_text(url))
     results: list[str] = []
     for href in parser.entries:
         if href.startswith(("?", "#", "http://", "https://")):
             continue
-        clean = normalize_bucket_href(href)
+        clean = normalize_bucket_href(href, release)
         if clean in ("", "../", "./", "index.html"):
             continue
         results.append(clean)
     return results
 
 
-def build_manifest(prefix: str) -> list[dict[str, str]]:
+def build_manifest(prefix: str, release: str = "current") -> list[dict[str, str]]:
     normalized_prefix = normalize_path(prefix)
     if normalized_prefix and not normalized_prefix.endswith("/"):
         normalized_prefix = f"{normalized_prefix}/"
 
+    base_url = release_base_url(release)
     todo = [normalized_prefix]
     seen: set[str] = set()
     files: list[dict[str, str]] = []
@@ -76,8 +89,8 @@ def build_manifest(prefix: str) -> list[dict[str, str]]:
         if current in seen:
             continue
         seen.add(current)
-        page_url = urllib.parse.urljoin(BASE_BUCKET, current)
-        for entry in scrape_index(page_url):
+        page_url = urllib.parse.urljoin(base_url, current)
+        for entry in scrape_index(page_url, release):
             normalized_entry = entry[:-10] if entry.endswith("/index.html") else entry
             if current and not normalized_entry.startswith(current):
                 continue
@@ -89,7 +102,7 @@ def build_manifest(prefix: str) -> list[dict[str, str]]:
             files.append(
                 {
                     "path": normalized_entry,
-                    "url": urllib.parse.urljoin(BASE_BUCKET, normalized_entry),
+                    "url": urllib.parse.urljoin(base_url, normalized_entry),
                 }
             )
     return sorted(files, key=lambda item: item["path"])
@@ -371,6 +384,130 @@ def run_query(db_path: Path, query: str) -> tuple[list[str], list[tuple[object, 
         conn.close()
 
 
+def pick_record_id(columns: list[str], row: tuple[object, ...], rowid: int) -> str:
+    row_map = dict(zip(columns, row, strict=True))
+    for candidate in SEARCH_ID_CANDIDATES:
+        value = row_map.get(candidate)
+        if value:
+            return str(value)
+    return str(rowid)
+
+
+def ensure_search_table(conn: sqlite3.Connection) -> None:
+    conn.execute("DROP TABLE IF EXISTS fb_search_fts")
+    conn.execute(
+        """
+        CREATE VIRTUAL TABLE fb_search_fts
+        USING fts5(table_name, record_id, text)
+        """
+    )
+
+
+def list_registry_table_names(conn: sqlite3.Connection) -> list[str]:
+    ensure_registry(conn)
+    return [
+        row[0]
+        for row in conn.execute(
+            "SELECT table_name FROM fb_ingest_registry ORDER BY table_name"
+        ).fetchall()
+    ]
+
+
+def rebuild_search_index(
+    db_path: Path,
+    table_names: list[str] | None = None,
+) -> list[dict[str, object]]:
+    conn = open_db(db_path)
+    try:
+        ensure_search_table(conn)
+        selected_tables = table_names or list_registry_table_names(conn)
+        indexed: list[dict[str, object]] = []
+
+        for table_name in selected_tables:
+            columns = [
+                row[1]
+                for row in conn.execute(f'PRAGMA table_info("{table_name}")').fetchall()
+            ]
+            if not columns:
+                continue
+
+            batch: list[tuple[str, str, str]] = []
+            row_count = 0
+            sql = f'SELECT rowid, {", ".join(f"""\"{column}\"""" for column in columns)} FROM "{table_name}"'
+            for result in conn.execute(sql):
+                rowid = int(result[0])
+                row = tuple("" if value is None else str(value) for value in result[1:])
+                text_parts = [
+                    f"{column}: {value}"
+                    for column, value in zip(columns, row, strict=True)
+                    if value
+                ]
+                if not text_parts:
+                    continue
+                batch.append(
+                    (
+                        table_name,
+                        pick_record_id(columns, row, rowid),
+                        "\n".join(text_parts),
+                    )
+                )
+                if len(batch) >= BATCH_SIZE:
+                    conn.executemany(
+                        "INSERT INTO fb_search_fts (table_name, record_id, text) VALUES (?, ?, ?)",
+                        batch,
+                    )
+                    row_count += len(batch)
+                    batch.clear()
+
+            if batch:
+                conn.executemany(
+                    "INSERT INTO fb_search_fts (table_name, record_id, text) VALUES (?, ?, ?)",
+                    batch,
+                )
+                row_count += len(batch)
+
+            indexed.append({"table_name": table_name, "row_count": row_count})
+
+        conn.commit()
+        return indexed
+    finally:
+        conn.close()
+
+
+def search_index(
+    db_path: Path,
+    query: str,
+    limit: int = 20,
+    table_name: str | None = None,
+) -> list[dict[str, object]]:
+    conn = open_db(db_path)
+    try:
+        sql = """
+            SELECT
+                table_name,
+                record_id,
+                snippet(fb_search_fts, 2, '[', ']', '...', 12) AS snippet
+            FROM fb_search_fts
+            WHERE fb_search_fts MATCH ?
+        """
+        params: list[object] = [query]
+        if table_name:
+            sql += " AND table_name = ?"
+            params.append(table_name)
+        sql += " LIMIT ?"
+        params.append(limit)
+        return [
+            {
+                "table_name": row[0],
+                "record_id": row[1],
+                "snippet": row[2],
+            }
+            for row in conn.execute(sql, params).fetchall()
+        ]
+    finally:
+        conn.close()
+
+
 def is_ingestable(path: Path) -> bool:
     path_str = path.name
     return any(path_str.endswith(suffix) for suffix in INGEST_SUFFIXES)
@@ -381,15 +518,21 @@ def sync_preset(
     root: Path,
     db_path: Path,
     manifest_path: Path,
+    release: str = "current",
     force: bool = False,
 ) -> dict[str, object]:
-    manifest = filter_manifest(build_manifest(preset.prefix), preset.includes, preset.excludes)
+    manifest = filter_manifest(
+        build_manifest(preset.prefix, release=release),
+        preset.includes,
+        preset.excludes,
+    )
     write_json(manifest_path, manifest)
     local_paths = download_manifest_entries(manifest, root, force=force)
     ingested = ingest_files(db_path, [path for path, _ in local_paths if is_ingestable(path)])
     return {
         "preset": preset.name,
         "description": preset.description,
+        "release": release,
         "manifest_path": str(manifest_path),
         "file_count": len(manifest),
         "ingested_tables": ingested,
