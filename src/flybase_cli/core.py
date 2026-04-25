@@ -540,6 +540,45 @@ def sample_column_values(
     return [str(row[0]) for row in rows]
 
 
+def describe_table(
+    conn: sqlite3.Connection,
+    table_name: str,
+    sample_values: int = 3,
+) -> dict[str, object] | None:
+    row = conn.execute(
+        """
+        SELECT source_path, row_count
+        FROM fb_ingest_registry
+        WHERE table_name = ?
+        """,
+        (table_name,),
+    ).fetchone()
+    if row is None:
+        return None
+    source_path, row_count = row
+    columns_meta = conn.execute(f'PRAGMA table_info("{table_name}")').fetchall()
+    columns = []
+    for meta in columns_meta:
+        column_name = meta[1]
+        columns.append(
+            {
+                "name": column_name,
+                "sample_values": sample_column_values(
+                    conn,
+                    table_name,
+                    column_name,
+                    sample_values,
+                ),
+            }
+        )
+    return {
+        "table_name": table_name,
+        "source_path": source_path,
+        "row_count": row_count,
+        "columns": columns,
+    }
+
+
 def describe_tables(
     db_path: Path,
     table_names: list[str] | None = None,
@@ -551,43 +590,44 @@ def describe_tables(
         selected = table_names or list_registry_table_names(conn)
         descriptions: list[dict[str, object]] = []
         for table_name in selected:
-            row = conn.execute(
-                """
-                SELECT source_path, row_count
-                FROM fb_ingest_registry
-                WHERE table_name = ?
-                """,
-                (table_name,),
-            ).fetchone()
-            if row is None:
-                continue
-            source_path, row_count = row
-            columns_meta = conn.execute(f'PRAGMA table_info("{table_name}")').fetchall()
-            columns = []
-            for meta in columns_meta:
-                column_name = meta[1]
-                columns.append(
-                    {
-                        "name": column_name,
-                        "sample_values": sample_column_values(
-                            conn,
-                            table_name,
-                            column_name,
-                            sample_values,
-                        ),
-                    }
-                )
-            descriptions.append(
-                {
-                    "table_name": table_name,
-                    "source_path": source_path,
-                    "row_count": row_count,
-                    "columns": columns,
-                }
-            )
+            description = describe_table(conn, table_name, sample_values=sample_values)
+            if description is not None:
+                descriptions.append(description)
         return descriptions
     finally:
         conn.close()
+
+
+def build_schema_summary(
+    db_path: Path,
+    table_names: list[str] | None = None,
+    sample_values: int = 3,
+) -> dict[str, object]:
+    tables = describe_tables(
+        db_path,
+        table_names=table_names,
+        sample_values=sample_values,
+    )
+    return {
+        "db_path": str(db_path),
+        "table_count": len(tables),
+        "tables": tables,
+    }
+
+
+def export_schema_summary(
+    db_path: Path,
+    output_path: Path,
+    table_names: list[str] | None = None,
+    sample_values: int = 3,
+) -> dict[str, object]:
+    payload = build_schema_summary(
+        db_path,
+        table_names=table_names,
+        sample_values=sample_values,
+    )
+    write_json(output_path, payload)
+    return payload
 
 
 def run_query(db_path: Path, query: str) -> tuple[list[str], list[tuple[object, ...]]] | None:

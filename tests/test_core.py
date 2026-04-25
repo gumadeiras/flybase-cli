@@ -13,9 +13,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from flybase_cli.config import GENOME_SYNC_PRESETS, SYNC_PRESETS
 from flybase_cli.core import (
+    build_schema_summary,
     extract_genomes,
     build_manifest_from_url,
     describe_tables,
+    ensure_registry,
+    export_schema_summary,
     find_genome,
     genome_asset_pattern,
     genome_section_url,
@@ -435,6 +438,57 @@ class FlybaseCoreTests(unittest.TestCase):
             self.assertEqual(indexed[0]["row_count"], 2)
             results = search_index(db_path, "memory")
             self.assertEqual(results[0]["record_id"], "FBgn1")
+
+    def test_build_schema_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "flybase.sqlite"
+            conn = open_db(db_path)
+            try:
+                ensure_registry(conn)
+                conn.execute('CREATE TABLE "fb_table" ("record_id" TEXT, "symbol" TEXT)')
+                conn.execute('INSERT INTO "fb_table" VALUES ("FBgn1", "gene1")')
+                conn.execute(
+                    """
+                    INSERT INTO fb_ingest_registry (source_path, table_name, row_count)
+                    VALUES (?, ?, ?)
+                    """,
+                    ("/tmp/genes.json.gz", "fb_table", 1),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            summary = build_schema_summary(db_path, sample_values=1)
+            self.assertEqual(summary["db_path"], str(db_path))
+            self.assertEqual(summary["table_count"], 1)
+            self.assertEqual(summary["tables"][0]["table_name"], "fb_table")
+            self.assertEqual(summary["tables"][0]["columns"][1]["sample_values"], ["gene1"])
+
+    def test_export_schema_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "flybase.sqlite"
+            output_path = Path(tmpdir) / "schema.json"
+            conn = open_db(db_path)
+            try:
+                ensure_registry(conn)
+                conn.execute('CREATE TABLE "fb_table" ("record_id" TEXT, "symbol" TEXT)')
+                conn.execute('INSERT INTO "fb_table" VALUES ("FBgn1", "gene1")')
+                conn.execute(
+                    """
+                    INSERT INTO fb_ingest_registry (source_path, table_name, row_count)
+                    VALUES (?, ?, ?)
+                    """,
+                    ("/tmp/genes.json.gz", "fb_table", 1),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            payload = export_schema_summary(db_path, output_path, sample_values=1)
+            self.assertEqual(payload["table_count"], 1)
+            written = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(written["tables"][0]["table_name"], "fb_table")
+            self.assertEqual(written["tables"][0]["columns"][0]["name"], "record_id")
 
     def test_sync_manifest_writes_manifest_and_ingests(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

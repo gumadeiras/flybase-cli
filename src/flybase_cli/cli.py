@@ -22,6 +22,7 @@ from .config import (
 from .core import (
     build_manifest,
     build_manifest_from_url,
+    export_schema_summary,
     fetch_bytes,
     filter_manifest,
     ingest_files,
@@ -60,6 +61,12 @@ def default_db_for_release(root: Path, release: str) -> Path:
     if release == DEFAULT_RELEASE:
         return root / DEFAULT_DB.name
     return root / f"{release}.sqlite"
+
+
+def default_schema_path(db_path: Path) -> Path:
+    if db_path.suffix:
+        return db_path.with_suffix(".schema.json")
+    return db_path.parent / f"{db_path.name}.schema.json"
 
 
 def cmd_manifest(args: argparse.Namespace) -> int:
@@ -116,6 +123,19 @@ def cmd_describe(args: argparse.Namespace) -> int:
             sample_values=args.sample_values,
         )
     )
+    return 0
+
+
+def cmd_schema_export(args: argparse.Namespace) -> int:
+    db_path = Path(args.db)
+    output_path = Path(args.output) if args.output else default_schema_path(db_path)
+    payload = export_schema_summary(
+        db_path,
+        output_path,
+        table_names=args.tables or None,
+        sample_values=args.sample_values,
+    )
+    print_json({**payload, "output_path": str(output_path)})
     return 0
 
 
@@ -360,6 +380,13 @@ def build_parser() -> argparse.ArgumentParser:
     describe_parser.add_argument("--tables", nargs="*")
     describe_parser.add_argument("--sample-values", type=int, default=3)
     describe_parser.set_defaults(func=cmd_describe)
+
+    schema_parser = subparsers.add_parser("schema-export", help="write machine-readable table metadata")
+    schema_parser.add_argument("--db", default=str(DEFAULT_DB))
+    schema_parser.add_argument("--tables", nargs="*")
+    schema_parser.add_argument("--sample-values", type=int, default=3)
+    schema_parser.add_argument("--output")
+    schema_parser.set_defaults(func=cmd_schema_export)
 
     presets_parser = subparsers.add_parser("presets", help="list sync presets")
     presets_parser.set_defaults(func=cmd_presets)
