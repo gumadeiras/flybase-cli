@@ -13,13 +13,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from flybase_cli.config import SYNC_PRESETS
 from flybase_cli.core import (
+    extract_genomes,
     build_manifest_from_url,
+    list_genomes,
     normalize_bucket_href,
     open_db,
     path_from_root_url,
     rebuild_search_index,
     release_base_url,
     search_index,
+    sync_manifest,
 )
 from flybase_cli.loaders import (
     flatten_json_record,
@@ -51,6 +54,25 @@ class FlybaseCoreTests(unittest.TestCase):
                 "https://s3ftp.flybase.org/genomes/Drosophila_melanogaster/dmel_r6.67_FB2026_01/fasta/dmel-all-miRNA-r6.67.fasta.gz",
             ),
             "dmel-all-miRNA-r6.67.fasta.gz",
+        )
+
+    def test_extract_genomes(self) -> None:
+        genomes = extract_genomes(
+            [
+                {"href": "/genomes/Drosophila_melanogaster/dmel_r6.67_FB2026_01", "text": "dmel_r6.67"},
+                {"href": "/releases/FB2026_01/precomputed_files/index.html", "text": "precomputed_files"},
+            ]
+        )
+        self.assertEqual(
+            genomes,
+            [
+                {
+                    "label": "dmel_r6.67",
+                    "species": "Drosophila_melanogaster",
+                    "genome_build": "dmel_r6.67_FB2026_01",
+                    "url": "https://s3ftp.flybase.org/genomes/Drosophila_melanogaster/dmel_r6.67_FB2026_01",
+                }
+            ],
         )
 
     def test_sanitize_columns(self) -> None:
@@ -270,6 +292,22 @@ class FlybaseCoreTests(unittest.TestCase):
             self.assertEqual(indexed[0]["row_count"], 2)
             results = search_index(db_path, "memory")
             self.assertEqual(results[0]["record_id"], "FBgn1")
+
+    def test_sync_manifest_writes_manifest_and_ingests(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            source = tmp / "mini.tsv"
+            source.write_text("#id\tvalue\na\tb\n", encoding="utf-8")
+            manifest = [{"path": "mini.tsv", "url": source.as_uri()}]
+            summary = sync_manifest(
+                manifest,
+                root=tmp / "root",
+                db_path=tmp / "db.sqlite",
+                manifest_path=tmp / "manifest.json",
+            )
+            self.assertEqual(summary["file_count"], 1)
+            self.assertTrue((tmp / "manifest.json").exists())
+            self.assertEqual(summary["ingested_tables"][0]["row_count"], 1)
 
 
 if __name__ == "__main__":
