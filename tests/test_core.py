@@ -446,7 +446,13 @@ class FlybaseCoreTests(unittest.TestCase):
             try:
                 ensure_registry(conn)
                 conn.execute('CREATE TABLE "fb_table" ("record_id" TEXT, "symbol" TEXT)')
+                conn.execute('CREATE TABLE "fb_table_child" ("parent_record_id" TEXT, "ordinal" TEXT, "value" TEXT)')
+                conn.execute('CREATE TABLE "fb_gene_ids" ("fbgn_id" TEXT, "symbol" TEXT)')
+                conn.execute('CREATE TABLE "fb_annotations" ("primary_fbgn" TEXT, "annotation_id" TEXT)')
                 conn.execute('INSERT INTO "fb_table" VALUES ("FBgn1", "gene1")')
+                conn.execute('INSERT INTO "fb_table_child" VALUES ("FBgn1", "1", "child")')
+                conn.execute('INSERT INTO "fb_gene_ids" VALUES ("FBgn1", "gene1")')
+                conn.execute('INSERT INTO "fb_annotations" VALUES ("FBgn1", "CG1")')
                 conn.execute(
                     """
                     INSERT INTO fb_ingest_registry (source_path, table_name, row_count)
@@ -454,15 +460,59 @@ class FlybaseCoreTests(unittest.TestCase):
                     """,
                     ("/tmp/genes.json.gz", "fb_table", 1),
                 )
+                conn.execute(
+                    """
+                    INSERT INTO fb_ingest_registry (source_path, table_name, row_count)
+                    VALUES (?, ?, ?)
+                    """,
+                    ("/tmp/genes.json.gz", "fb_table_child", 1),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO fb_ingest_registry (source_path, table_name, row_count)
+                    VALUES (?, ?, ?)
+                    """,
+                    ("/tmp/gene_ids.tsv.gz", "fb_gene_ids", 1),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO fb_ingest_registry (source_path, table_name, row_count)
+                    VALUES (?, ?, ?)
+                    """,
+                    ("/tmp/annotations.tsv.gz", "fb_annotations", 1),
+                )
                 conn.commit()
             finally:
                 conn.close()
 
             summary = build_schema_summary(db_path, sample_values=1)
             self.assertEqual(summary["db_path"], str(db_path))
-            self.assertEqual(summary["table_count"], 1)
-            self.assertEqual(summary["tables"][0]["table_name"], "fb_table")
-            self.assertEqual(summary["tables"][0]["columns"][1]["sample_values"], ["gene1"])
+            self.assertEqual(summary["table_count"], 4)
+            fb_table = next(table for table in summary["tables"] if table["table_name"] == "fb_table")
+            self.assertEqual(fb_table["columns"][1]["sample_values"], ["gene1"])
+            self.assertIn(
+                {
+                    "kind": "lineage",
+                    "from_table": "fb_table_child",
+                    "to_table": "fb_table",
+                    "column_pairs": [{"from": "parent_record_id", "to": "record_id"}],
+                    "confidence": "high",
+                    "description": "Nested child table joins to its parent record_id.",
+                },
+                summary["relationships"],
+            )
+            self.assertIn(
+                {
+                    "kind": "id-alias",
+                    "entity": "fbgn",
+                    "from_table": "fb_annotations",
+                    "to_table": "fb_gene_ids",
+                    "column_pairs": [{"from": "primary_fbgn", "to": "fbgn_id"}],
+                    "confidence": "medium",
+                    "description": "Shared FlyBase fbgn identifiers inferred from column names.",
+                },
+                summary["relationships"],
+            )
 
     def test_export_schema_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -489,6 +539,7 @@ class FlybaseCoreTests(unittest.TestCase):
             written = json.loads(output_path.read_text(encoding="utf-8"))
             self.assertEqual(written["tables"][0]["table_name"], "fb_table")
             self.assertEqual(written["tables"][0]["columns"][0]["name"], "record_id")
+            self.assertEqual(written["relationships"], [])
 
     def test_sync_manifest_writes_manifest_and_ingests(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

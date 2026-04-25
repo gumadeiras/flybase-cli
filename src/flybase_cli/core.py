@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import itertools
+import re
 import sqlite3
 import subprocess
 import urllib.parse
@@ -598,6 +600,130 @@ def describe_tables(
         conn.close()
 
 
+def table_column_names(table: dict[str, object]) -> list[str]:
+    return [str(column["name"]) for column in table["columns"]]
+
+
+def lineage_reference_columns(columns: list[str]) -> list[str]:
+    ordered: list[tuple[int, str]] = []
+    for column in columns:
+        match = re.fullmatch(r"ancestor_ordinal_(\d+)", column)
+        if match:
+            ordered.append((int(match.group(1)), column))
+    lineage = [column for _, column in sorted(ordered)]
+    if "parent_ordinal" in columns:
+        lineage.append("parent_ordinal")
+    return lineage
+
+
+def lineage_key_columns(columns: list[str]) -> list[str]:
+    lineage = lineage_reference_columns(columns)
+    if "ordinal" in columns:
+        lineage.append("ordinal")
+    return lineage
+
+
+def infer_lineage_relationship(
+    child: dict[str, object],
+    tables_by_name: dict[str, dict[str, object]],
+) -> dict[str, object] | None:
+    child_name = str(child["table_name"])
+    child_columns = table_column_names(child)
+    if "parent_record_id" not in child_columns:
+        return None
+
+    candidates = [
+        table_name
+        for table_name in tables_by_name
+        if table_name != child_name and child_name.startswith(f"{table_name}_")
+    ]
+    if not candidates:
+        return None
+    parent_name = max(candidates, key=len)
+    parent = tables_by_name[parent_name]
+    parent_columns = table_column_names(parent)
+    child_refs = lineage_reference_columns(child_columns)
+
+    if "record_id" in parent_columns and not child_refs:
+        return {
+            "kind": "lineage",
+            "from_table": child_name,
+            "to_table": parent_name,
+            "column_pairs": [{"from": "parent_record_id", "to": "record_id"}],
+            "confidence": "high",
+            "description": "Nested child table joins to its parent record_id.",
+        }
+
+    if "parent_record_id" not in parent_columns:
+        return None
+    parent_keys = lineage_key_columns(parent_columns)
+    if len(child_refs) != len(parent_keys):
+        return None
+    return {
+        "kind": "lineage",
+        "from_table": child_name,
+        "to_table": parent_name,
+        "column_pairs": [
+            {"from": "parent_record_id", "to": "parent_record_id"},
+            *[
+                {"from": from_column, "to": to_column}
+                for from_column, to_column in zip(child_refs, parent_keys, strict=True)
+            ],
+        ],
+        "confidence": "high",
+        "description": "Nested child table joins to its direct parent via lineage columns.",
+    }
+
+
+ID_ALIAS_GROUPS: dict[str, tuple[str, ...]] = {
+    "fbgn": ("fbgn_id", "primary_fbgn", "flybase_fbgn"),
+    "fbtr": ("fbtr_id", "primary_fbtr", "flybase_fbtr"),
+    "fbpp": ("fbpp_id", "primary_fbpp", "flybase_fbpp"),
+}
+
+
+def infer_id_alias_relationships(tables: list[dict[str, object]]) -> list[dict[str, object]]:
+    relationships: list[dict[str, object]] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    for group, aliases in ID_ALIAS_GROUPS.items():
+        matches: list[tuple[str, str]] = []
+        for table in tables:
+            table_name = str(table["table_name"])
+            columns = set(table_column_names(table))
+            alias = next((candidate for candidate in aliases if candidate in columns), None)
+            if alias is not None:
+                matches.append((table_name, alias))
+        for (left_table, left_column), (right_table, right_column) in itertools.combinations(matches, 2):
+            key = (group, left_table, right_table)
+            if key in seen:
+                continue
+            seen.add(key)
+            relationships.append(
+                {
+                    "kind": "id-alias",
+                    "entity": group,
+                    "from_table": left_table,
+                    "to_table": right_table,
+                    "column_pairs": [{"from": left_column, "to": right_column}],
+                    "confidence": "medium",
+                    "description": f"Shared FlyBase {group} identifiers inferred from column names.",
+                }
+            )
+    return relationships
+
+
+def infer_schema_relationships(tables: list[dict[str, object]]) -> list[dict[str, object]]:
+    tables_by_name = {str(table["table_name"]): table for table in tables}
+    relationships = []
+    for table in tables:
+        relationship = infer_lineage_relationship(table, tables_by_name)
+        if relationship is not None:
+            relationships.append(relationship)
+    relationships.extend(infer_id_alias_relationships(tables))
+    return relationships
+
+
 def build_schema_summary(
     db_path: Path,
     table_names: list[str] | None = None,
@@ -612,6 +738,7 @@ def build_schema_summary(
         "db_path": str(db_path),
         "table_count": len(tables),
         "tables": tables,
+        "relationships": infer_schema_relationships(tables),
     }
 
 
