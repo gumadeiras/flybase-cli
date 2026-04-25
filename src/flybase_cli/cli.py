@@ -11,6 +11,7 @@ from .config import (
     BASE_API,
     DEFAULT_DB,
     DEFAULT_MANIFEST,
+    DEFAULT_POSTGRES_DIR,
     DEFAULT_RELEASE,
     DEFAULT_ROOT,
     SYNC_PRESETS,
@@ -29,6 +30,12 @@ from .core import (
     search_index,
     sync_preset,
     write_json,
+)
+from .postgres import (
+    build_pg_load_plan,
+    ensure_dump_file,
+    execute_pg_load_script,
+    write_pg_load_script,
 )
 
 
@@ -164,6 +171,44 @@ def cmd_search(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_pg_load(args: argparse.Namespace) -> int:
+    root = Path(args.root)
+    plan = build_pg_load_plan(
+        release=args.release,
+        root=root,
+        db_name=args.db_name,
+        dump_path=Path(args.dump_path) if args.dump_path else None,
+        script_path=Path(args.script_path) if args.script_path else None,
+        drop_existing=args.drop_existing,
+    )
+    dump_path = Path(plan["dump_path"])
+    script_path = Path(plan["script_path"])
+    if args.download:
+        ensure_dump_file(
+            release=args.release,
+            dump_path=dump_path,
+            force=args.force_download,
+        )
+        plan["downloaded"] = True
+    write_pg_load_script(
+        release=args.release,
+        dump_path=dump_path,
+        db_name=str(plan["db_name"]),
+        script_path=script_path,
+        drop_existing=args.drop_existing,
+    )
+    plan["script_written"] = True
+    if args.execute:
+        missing = [name for name, path in plan["tools"].items() if name in {"createdb", "psql"} and not path]
+        if missing:
+            print_json({"error": "missing-postgres-tools", "missing": missing, **plan})
+            return 1
+        execute_pg_load_script(script_path)
+        plan["executed"] = True
+    print_json(plan)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="FlyBase sync/query helper for agents.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -229,6 +274,18 @@ def build_parser() -> argparse.ArgumentParser:
     search_parser.add_argument("--table")
     search_parser.add_argument("--limit", type=int, default=20)
     search_parser.set_defaults(func=cmd_search)
+
+    pg_parser = subparsers.add_parser("pg-load", help="stage or execute a FlyBase Postgres import")
+    pg_parser.add_argument("--release", default=DEFAULT_RELEASE)
+    pg_parser.add_argument("--root", default=str(DEFAULT_POSTGRES_DIR))
+    pg_parser.add_argument("--db-name")
+    pg_parser.add_argument("--dump-path")
+    pg_parser.add_argument("--script-path")
+    pg_parser.add_argument("--download", action="store_true")
+    pg_parser.add_argument("--force-download", action="store_true")
+    pg_parser.add_argument("--drop-existing", action="store_true")
+    pg_parser.add_argument("--execute", action="store_true")
+    pg_parser.set_defaults(func=cmd_pg_load)
 
     api_parser = subparsers.add_parser("api", help="call the FlyBase HTTP API")
     api_parser.add_argument("endpoint")

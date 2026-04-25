@@ -10,6 +10,7 @@ DEFAULT_RELEASE = "current"
 DEFAULT_ROOT = Path("data/flybase")
 DEFAULT_DB = DEFAULT_ROOT / "flybase.sqlite"
 DEFAULT_MANIFEST = DEFAULT_ROOT / "manifest.json"
+DEFAULT_POSTGRES_DIR = DEFAULT_ROOT / "postgres"
 BATCH_SIZE = 1000
 DELIMITED_SUFFIXES = (".tsv", ".csv", ".tsv.gz", ".csv.gz")
 FASTA_SUFFIXES = (
@@ -46,6 +47,7 @@ JSON_ID_CANDIDATES = (
     "symbol",
     "name",
 )
+JSON_MAX_INFERRED_COLUMNS = 24
 
 
 @dataclass(frozen=True)

@@ -18,6 +18,7 @@ from .config import (
     GFF_SUFFIXES,
     GTF_SUFFIXES,
     JSON_ID_CANDIDATES,
+    JSON_MAX_INFERRED_COLUMNS,
     JSON_SUFFIXES,
 )
 
@@ -320,13 +321,72 @@ def pick_json_record_id(item: object, fallback_index: int) -> str:
     return str(fallback_index)
 
 
+def json_scalar_to_text(value: object) -> str | None:
+    if value is None:
+        return ""
+    if isinstance(value, (str, int, float, bool)):
+        return str(value)
+    return None
+
+
+def flatten_json_record(record: dict[str, object], prefix: str = "") -> dict[str, str]:
+    flattened: dict[str, str] = {}
+    for key, value in record.items():
+        safe_key = re.sub(r"[^A-Za-z0-9_]+", "_", key).strip("_")
+        if not safe_key:
+            continue
+        full_key = f"{prefix}{safe_key}" if not prefix else f"{prefix}_{safe_key}"
+        scalar = json_scalar_to_text(value)
+        if scalar is not None:
+            flattened[full_key] = scalar
+            continue
+        if isinstance(value, dict):
+            for nested_key, nested_value in flatten_json_record(value, full_key).items():
+                flattened[nested_key] = nested_value
+    return flattened
+
+
+def extract_json_records(payload: object) -> list[dict[str, object]]:
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if isinstance(payload, dict):
+        list_keys = [key for key, value in payload.items() if isinstance(value, list)]
+        if len(list_keys) == 1:
+            return [item for item in payload[list_keys[0]] if isinstance(item, dict)]
+        return [payload]
+    return []
+
+
+def infer_json_columns(records: list[dict[str, object]]) -> list[str]:
+    frequencies: dict[str, int] = {}
+    for record in records[:200]:
+        for key in flatten_json_record(record):
+            frequencies[key] = frequencies.get(key, 0) + 1
+    ordered = sorted(frequencies.items(), key=lambda item: (-item[1], item[0]))
+    return [key for key, _ in ordered[:JSON_MAX_INFERRED_COLUMNS]]
+
+
 def ingest_json(conn: sqlite3.Connection, source: Path, table_name: str) -> int:
-    columns = ["record_id", "payload_json"]
-    insert_sql = create_table(conn, table_name, columns)
     with open_maybe_gzip(source) as handle:
         payload = json.load(handle)
+    records = extract_json_records(payload)
+    if not records:
+        columns = ["record_id", "payload_json"]
+        insert_sql = create_table(conn, table_name, columns)
+        batch = list(iter_json_rows(payload))
+        conn.executemany(insert_sql, batch)
+        return len(batch)
 
-    batch = list(iter_json_rows(payload))
+    inferred_columns = infer_json_columns(records)
+    columns = ["record_id", *inferred_columns, "payload_json"]
+    insert_sql = create_table(conn, table_name, columns)
+    batch: list[tuple[str, ...]] = []
+    for index, record in enumerate(records, start=1):
+        flattened = flatten_json_record(record)
+        row = [pick_json_record_id(record, index)]
+        row.extend(flattened.get(column, "") for column in inferred_columns)
+        row.append(json.dumps(record, sort_keys=True))
+        batch.append(tuple(row))
     conn.executemany(insert_sql, batch)
     return len(batch)
 
