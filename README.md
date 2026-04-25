@@ -118,6 +118,7 @@ python3 flybase_cli.py api domain/FBgn0001250
 - top-level scalar JSON fields become queryable SQLite columns
 - one nested dict level is flattened, eg `gene.symbol` -> `gene_symbol`
 - repeated top-level lists become child tables, eg `symbolSynonyms` -> `<table>_symbolsynonyms`
+- repeated lists nested inside child dict rows become descendant tables, eg `genomeLocations[].exons[]` -> `<table>_genomelocations_exons`
 - full source record remains in `payload_json`
 
 Example:
@@ -129,6 +130,11 @@ python3 flybase_cli.py sql \
 python3 flybase_cli.py sql \
   "select parent_record_id, ordinal, value \
    from fb_ncrna_genes_fb_2026_01_symbolsynonyms \
+   limit 5"
+
+python3 flybase_cli.py sql \
+  "select parent_record_id, parent_ordinal, ordinal, startPosition, endPosition \
+   from fb_ncrna_genes_fb_2026_01_genomelocations_exons \
    limit 5"
 ```
 
@@ -145,7 +151,7 @@ python3 flybase_cli.py sql \
 
 ## Notes
 
-- ingest path assumes delimited `tsv/csv` files only.
+- nested JSON child tables keep lineage columns like `parent_record_id`, `parent_ordinal`, `ordinal`.
 - many FlyBase files start with `##` metadata lines; loader skips those.
 - `sync` writes a preset manifest under `data/flybase/manifests/<release>/`.
 - `sync --release FB2026_01` defaults to `data/flybase/FB2026_01.sqlite` to avoid cross-release mixing.
