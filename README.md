@@ -149,6 +149,7 @@ python3 flybase_cli.py sql \
 
 - `describe` summarizes ingested tables with row counts, source paths, columns, and representative non-empty values
 - `schema-export` writes the same metadata to a deterministic JSON artifact beside the SQLite DB, eg `FB2026_01.schema.json`
+- `schema-export` also includes inferred `relationships` for nested child tables and common FlyBase ID joins
 - useful first step before writing ad hoc SQL or building agent query plans
 
 Example:
