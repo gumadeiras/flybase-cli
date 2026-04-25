@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from flybase_cli.config import SYNC_PRESETS
+from flybase_cli.config import GENOME_SYNC_PRESETS, SYNC_PRESETS
 from flybase_cli.core import (
     extract_genomes,
     build_manifest_from_url,
@@ -89,6 +89,10 @@ class FlybaseCoreTests(unittest.TestCase):
 
     def test_genome_asset_pattern(self) -> None:
         self.assertEqual(genome_asset_pattern("mirna"), ["miRNA"])
+
+    def test_genome_sync_presets_shape(self) -> None:
+        self.assertIn("mirna-fasta", GENOME_SYNC_PRESETS)
+        self.assertEqual(GENOME_SYNC_PRESETS["mirna-fasta"].section, "fasta")
 
     def test_find_genome_exact_match(self) -> None:
         original = list_genomes
