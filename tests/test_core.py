@@ -3,6 +3,7 @@ from __future__ import annotations
 import gzip
 import json
 import sqlite3
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -663,6 +664,16 @@ class FlybaseCoreTests(unittest.TestCase):
                 self.assertEqual(pk_map["table_name"], 2)
             finally:
                 conn.close()
+
+    def test_cli_version_flag(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [sys.executable, str(root / "flybase_cli.py"), "--version"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertIn("0.1.0", result.stdout)
 
 
 if __name__ == "__main__":

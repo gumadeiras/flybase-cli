@@ -52,6 +52,7 @@ from .syncing import (
     sync_full_release,
     sync_incremental_preset,
 )
+from .version import __version__
 
 
 def print_json(payload: object) -> None:
@@ -461,6 +462,11 @@ def cmd_pg_load(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="FlyBase sync/query helper for agents.")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     manifest_parser = subparsers.add_parser("manifest", help="scrape a release prefix or FlyBase directory URL")
