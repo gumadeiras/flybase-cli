@@ -33,7 +33,6 @@ from .core import (
     load_manifest,
     rebuild_search_index,
     release_base_url,
-    run_query,
     search_index,
     sync_manifest,
     sync_preset,
@@ -45,7 +44,9 @@ from .postgres import (
     execute_pg_load_script,
     write_pg_load_script,
 )
+from .querying import execute_sql, parse_cli_params, run_query_template
 from .schema import build_query_plan, describe_tables, export_schema_summary
+from .syncing import build_preset_release_diff, build_release_diff, sync_incremental_preset
 
 
 def print_json(payload: object) -> None:
@@ -100,12 +101,14 @@ def cmd_ingest(args: argparse.Namespace) -> int:
 
 
 def cmd_sql(args: argparse.Namespace) -> int:
-    result = run_query(Path(args.db), args.query)
-    if result is None:
-        print("ok")
-        return 0
-    columns, rows = result
-    print_json({"columns": columns, "rows": rows[: args.limit]})
+    print_json(
+        execute_sql(
+            Path(args.db),
+            args.query,
+            limit=args.limit,
+            output_format=args.format,
+        )
+    )
     return 0
 
 
@@ -151,13 +154,43 @@ def cmd_query_plan(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_query_run(args: argparse.Namespace) -> int:
+    if not any((args.template_id, args.template_name, args.kind, args.table)):
+        print("query-run needs at least one selector such as --template-id or --template-name", file=sys.stderr)
+        return 1
+    try:
+        payload = run_query_template(
+            Path(args.db),
+            template_id=args.template_id,
+            template_name=args.template_name,
+            kind=args.kind,
+            table_name=args.table,
+            params=parse_cli_params(args.param),
+            sample_values=args.sample_values,
+            plan_limit=args.plan_limit,
+            result_limit=args.limit,
+            output_format=args.format,
+        )
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        return 1
+    print_json(payload)
+    return 0
+
+
 def cmd_presets(_: argparse.Namespace) -> int:
     payload = [
         {
             "name": preset.name,
             "description": preset.description,
-            "prefix": preset.prefix,
-            "includes": list(preset.includes),
+            "selections": [
+                {
+                    "prefix": selection.prefix,
+                    "includes": list(selection.includes),
+                    "excludes": list(selection.excludes),
+                }
+                for selection in preset.selections
+            ],
         }
         for preset in SYNC_PRESETS.values()
     ]
@@ -193,6 +226,32 @@ def cmd_sync(args: argparse.Namespace) -> int:
         manifest_path=manifest_path,
         release=args.release,
         force=args.force,
+    )
+    summary["db_path"] = str(db_path)
+    print_json(summary)
+    return 0
+
+
+def cmd_sync_incremental(args: argparse.Namespace) -> int:
+    preset = SYNC_PRESETS[args.preset]
+    root = Path(args.root)
+    db_path = Path(args.db) if args.db else default_db_for_release(root, args.release)
+    manifest_path = Path(args.manifest or default_manifest_for_release(root, preset.name, args.release))
+    diff_path = (
+        Path(args.diff_output)
+        if args.diff_output
+        else root / "manifests" / args.release / f"{preset.name}-diff-from-{args.from_release}.json"
+    )
+    summary = sync_incremental_preset(
+        preset=preset,
+        root=root,
+        db_path=db_path,
+        manifest_path=manifest_path,
+        diff_path=diff_path,
+        from_release=args.from_release,
+        to_release=args.release,
+        force=args.force,
+        no_header=args.no_header,
     )
     summary["db_path"] = str(db_path)
     print_json(summary)
@@ -289,6 +348,31 @@ def cmd_release_url(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_release_diff(args: argparse.Namespace) -> int:
+    preset = SYNC_PRESETS.get(args.preset)
+    if preset is None and not args.prefix:
+        print("release-diff needs either --preset or --prefix", file=sys.stderr)
+        return 1
+    if preset is not None:
+        payload = build_preset_release_diff(
+            preset=preset,
+            from_release=args.from_release,
+            to_release=args.to_release,
+        )
+    else:
+        payload = build_release_diff(
+            prefix=args.prefix,
+            from_release=args.from_release,
+            to_release=args.to_release,
+            include=args.include,
+            exclude=args.exclude,
+        )
+    if args.output:
+        write_json(Path(args.output), payload)
+    print_json(payload)
+    return 0
+
+
 def cmd_genomes(args: argparse.Namespace) -> int:
     print_json(list_genomes(args.release))
     return 0
@@ -380,6 +464,7 @@ def build_parser() -> argparse.ArgumentParser:
     sql_parser.add_argument("query")
     sql_parser.add_argument("--db", default=str(DEFAULT_DB))
     sql_parser.add_argument("--limit", type=int, default=20)
+    sql_parser.add_argument("--format", choices=("records", "rows"), default="records")
     sql_parser.set_defaults(func=cmd_sql)
 
     tables_parser = subparsers.add_parser("tables", help="list ingested tables")
@@ -408,6 +493,19 @@ def build_parser() -> argparse.ArgumentParser:
     query_plan_parser.add_argument("--limit", type=int, default=5)
     query_plan_parser.set_defaults(func=cmd_query_plan)
 
+    query_run_parser = subparsers.add_parser("query-run", help="execute a suggested query template")
+    query_run_parser.add_argument("--db", default=str(DEFAULT_DB))
+    query_run_parser.add_argument("--template-id")
+    query_run_parser.add_argument("--template-name")
+    query_run_parser.add_argument("--kind")
+    query_run_parser.add_argument("--table")
+    query_run_parser.add_argument("--param", action="append", default=[])
+    query_run_parser.add_argument("--sample-values", type=int, default=1)
+    query_run_parser.add_argument("--plan-limit", type=int, default=5)
+    query_run_parser.add_argument("--limit", type=int, default=20)
+    query_run_parser.add_argument("--format", choices=("records", "rows"), default="records")
+    query_run_parser.set_defaults(func=cmd_query_run)
+
     presets_parser = subparsers.add_parser("presets", help="list sync presets")
     presets_parser.set_defaults(func=cmd_presets)
 
@@ -422,6 +520,21 @@ def build_parser() -> argparse.ArgumentParser:
     sync_parser.add_argument("--manifest")
     sync_parser.add_argument("--force", action="store_true")
     sync_parser.set_defaults(func=cmd_sync)
+
+    sync_incremental_parser = subparsers.add_parser(
+        "sync-incremental",
+        help="sync only added or changed preset files between FlyBase releases",
+    )
+    sync_incremental_parser.add_argument("preset", choices=sorted(SYNC_PRESETS))
+    sync_incremental_parser.add_argument("--from-release", required=True)
+    sync_incremental_parser.add_argument("--release", required=True)
+    sync_incremental_parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    sync_incremental_parser.add_argument("--db")
+    sync_incremental_parser.add_argument("--manifest")
+    sync_incremental_parser.add_argument("--diff-output")
+    sync_incremental_parser.add_argument("--force", action="store_true")
+    sync_incremental_parser.add_argument("--no-header", action="store_true")
+    sync_incremental_parser.set_defaults(func=cmd_sync_incremental)
 
     sync_url_parser = subparsers.add_parser("sync-url", help="crawl + download + ingest an arbitrary FlyBase directory URL")
     sync_url_parser.add_argument("--url", required=True)
@@ -454,6 +567,16 @@ def build_parser() -> argparse.ArgumentParser:
     release_parser = subparsers.add_parser("release-url", help="show the bulk-data base URL for a release")
     release_parser.add_argument("--release", default=DEFAULT_RELEASE)
     release_parser.set_defaults(func=cmd_release_url)
+
+    release_diff_parser = subparsers.add_parser("release-diff", help="compare FlyBase release manifests")
+    release_diff_parser.add_argument("--from-release", required=True)
+    release_diff_parser.add_argument("--to-release", required=True)
+    release_diff_parser.add_argument("--preset", choices=sorted(SYNC_PRESETS))
+    release_diff_parser.add_argument("--prefix")
+    release_diff_parser.add_argument("--include", action="append", default=[])
+    release_diff_parser.add_argument("--exclude", action="append", default=[])
+    release_diff_parser.add_argument("--output")
+    release_diff_parser.set_defaults(func=cmd_release_diff)
 
     genomes_parser = subparsers.add_parser("genomes", help="list genome builds linked from a FlyBase release")
     genomes_parser.add_argument("--release", default=DEFAULT_RELEASE)

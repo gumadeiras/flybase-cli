@@ -33,6 +33,18 @@ python3 flybase_cli.py sync gene-core
 
 python3 flybase_cli.py sync gene-core --release FB2026_01
 
+python3 flybase_cli.py sync gene-knowledge --release FB2026_01
+
+python3 flybase_cli.py sync-incremental \
+  gene-knowledge \
+  --from-release FB2025_06 \
+  --release FB2026_01
+
+python3 flybase_cli.py release-diff \
+  --preset gene-knowledge \
+  --from-release FB2025_06 \
+  --to-release FB2026_01
+
 python3 flybase_cli.py genomes --release FB2026_01
 
 python3 flybase_cli.py sync-genome \
@@ -68,6 +80,7 @@ python3 flybase_cli.py tables --columns
 python3 flybase_cli.py describe --sample-values 2
 python3 flybase_cli.py schema-export --sample-values 1
 python3 flybase_cli.py query-plan --sample-values 1 --limit 5
+python3 flybase_cli.py query-run --template-name gene-summary-by-fbgn --param fbgn_id=FBgn0002121
 
 python3 flybase_cli.py fts-build
 
@@ -93,6 +106,9 @@ python3 flybase_cli.py api domain/FBgn0001250
 - `gene-core`: summaries + FBgn/FBtr/FBpp + annotation IDs + SO annotations
 - `gene-expression`: curated/high-throughput/scRNA expression slices
 - `references`: publication/link tables
+- `gene-knowledge`: core gene facts + representative publications + orthology tables
+- `orthology`: ortholog, paralog, and disease-association tables
+- `interactions`: gene- and allele-level interaction tables
 
 ## Discovery
 
@@ -148,11 +164,14 @@ python3 flybase_cli.py sql \
 
 ## Metadata
 
-- `describe` summarizes ingested tables with row counts, source paths, columns, and representative non-empty values
+- `describe` summarizes ingested tables with row counts, source paths, semantic tags, columns, and representative non-empty values
 - `schema-export` writes the same metadata to a deterministic JSON artifact beside the SQLite DB, eg `FB2026_01.schema.json`
 - `schema-export` also includes inferred `relationships` for nested child tables and common FlyBase ID joins
+- `schema-export` also emits `semantic_summary` for table/entity tag coverage
 - `schema-export` also emits ready-to-run `query_templates`
 - `query-plan` prints starter SQL without the larger schema payload
+- `query-plan` now includes named biological templates such as `gene-summary-by-fbgn`, `transcript-protein-links`, `publications-for-gene`, and coordinate lookups when matching tables exist
+- `query-run` selects one template and executes it with parameter values
 - useful first step before writing ad hoc SQL or building agent query plans
 
 Example:
@@ -166,6 +185,11 @@ python3 flybase_cli.py query-plan \
   --db data/flybase/FB2026_01.sqlite \
   --sample-values 1 \
   --limit 5
+
+python3 flybase_cli.py query-run \
+  --db data/flybase/FB2026_01.sqlite \
+  --template-name gene-summary-by-fbgn \
+  --param fbgn_id=FBgn0002121
 ```
 
 ## Notes
@@ -174,11 +198,14 @@ python3 flybase_cli.py query-plan \
 - many FlyBase files start with `##` metadata lines; loader skips those.
 - `sync` writes a preset manifest under `data/flybase/manifests/<release>/`.
 - `sync --release FB2026_01` defaults to `data/flybase/FB2026_01.sqlite` to avoid cross-release mixing.
+- `sync-incremental` uses stable manifest keys so release-renamed files still land in `updated` instead of noisy add/remove pairs.
+- `release-diff` compares releases either by raw prefix or by curated multi-prefix preset.
 - `manifest --url` lets you crawl non-`releases/` FlyBase directories such as genome FASTA/GFF trees.
 - `sync-url` is the shortest path for genome assets once you know the directory URL.
 - `sync-genome` is the shortest path when you know the FlyBase release + genome build label.
 - `sync-genome --preset ...` is the preferred path for common genome asset pulls.
 - some FlyBase `.gff.gz` assets are tar-wrapped gzip archives; loader handles that transparently.
+- `sql` and `query-run` shape results as record-oriented JSON with summary metadata for agent chaining.
 - `pg-load` stages the full Postgres import script for `releases/<release>/psql/<release>.sql.gz`.
 - `pg-load --execute` runs the staged script when `createdb` and `psql` are installed locally.
 - SQLite keeps setup minimal; switch to DuckDB/Postgres if you want bigger joins/faster scans.

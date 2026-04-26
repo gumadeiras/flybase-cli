@@ -15,8 +15,9 @@ Use `flybase-cli` to fetch FlyBase data into local files + SQLite, then query lo
 
 1. Sync data.
 2. Export schema metadata.
-3. Query locally with `sql` or `search`.
-4. Use `api` only for narrow live lookups not present locally.
+3. Inspect `query-plan` / `query-run` if a named template fits.
+4. Query locally with `sql` or `search`.
+5. Use `api` only for narrow live lookups not present locally.
 
 ## Fetch
 
@@ -24,6 +25,8 @@ Core gene tables:
 
 ```bash
 python3 flybase_cli.py sync gene-core --release FB2026_01
+python3 flybase_cli.py sync gene-knowledge --release FB2026_01
+python3 flybase_cli.py sync-incremental gene-knowledge --from-release FB2025_06 --release FB2026_01
 ```
 
 Genome assets:
@@ -48,6 +51,7 @@ python3 flybase_cli.py tables --db data/flybase/FB2026_01.sqlite --columns
 python3 flybase_cli.py describe --db data/flybase/FB2026_01.sqlite --sample-values 1
 python3 flybase_cli.py schema-export --db data/flybase/FB2026_01.sqlite --sample-values 1
 python3 flybase_cli.py query-plan --db data/flybase/FB2026_01.sqlite --sample-values 1 --limit 5
+python3 flybase_cli.py query-run --db data/flybase/FB2026_01.sqlite --template-name gene-summary-by-fbgn --param fbgn_id=FBgn0002121
 ```
 
 Query locally:
@@ -62,8 +66,10 @@ python3 flybase_cli.py search --db data/flybase/FB2026_01.sqlite 'memory formati
 
 - `schema-export` writes `<db>.schema.json`.
 - Use `tables` + `columns` for available surfaces.
+- Use `semantic_tags` / `semantic_summary` to narrow tables before writing SQL.
 - Use `relationships` from `schema-export` for joins.
 - Use `query_templates` from `schema-export` or `query-plan` for ready SQL.
+- Prefer named templates for common biological questions; execute with `query-run`.
 - Nested JSON child tables use lineage columns like `parent_record_id`, `parent_ordinal`, `ordinal`.
 
 ## Online fallback
