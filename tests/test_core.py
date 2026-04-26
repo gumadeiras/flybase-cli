@@ -45,6 +45,16 @@ from flybase_cli.schema import (
 )
 
 
+def register_table(conn: sqlite3.Connection, source_path: str, table_name: str, row_count: int) -> None:
+    conn.execute(
+        """
+        INSERT INTO fb_ingest_registry (source_path, table_name, row_count)
+        VALUES (?, ?, ?)
+        """,
+        (source_path, table_name, row_count),
+    )
+
+
 class FlybaseCoreTests(unittest.TestCase):
     def test_normalize_bucket_href(self) -> None:
         self.assertEqual(
@@ -456,34 +466,10 @@ class FlybaseCoreTests(unittest.TestCase):
                 conn.execute('INSERT INTO "fb_table_child" VALUES ("FBgn1", "1", "child")')
                 conn.execute('INSERT INTO "fb_gene_ids" VALUES ("FBgn1", "gene1")')
                 conn.execute('INSERT INTO "fb_annotations" VALUES ("FBgn1", "CG1")')
-                conn.execute(
-                    """
-                    INSERT INTO fb_ingest_registry (source_path, table_name, row_count)
-                    VALUES (?, ?, ?)
-                    """,
-                    ("/tmp/genes.json.gz", "fb_table", 1),
-                )
-                conn.execute(
-                    """
-                    INSERT INTO fb_ingest_registry (source_path, table_name, row_count)
-                    VALUES (?, ?, ?)
-                    """,
-                    ("/tmp/genes.json.gz", "fb_table_child", 1),
-                )
-                conn.execute(
-                    """
-                    INSERT INTO fb_ingest_registry (source_path, table_name, row_count)
-                    VALUES (?, ?, ?)
-                    """,
-                    ("/tmp/gene_ids.tsv.gz", "fb_gene_ids", 1),
-                )
-                conn.execute(
-                    """
-                    INSERT INTO fb_ingest_registry (source_path, table_name, row_count)
-                    VALUES (?, ?, ?)
-                    """,
-                    ("/tmp/annotations.tsv.gz", "fb_annotations", 1),
-                )
+                register_table(conn, "/tmp/genes.json.gz", "fb_table", 1)
+                register_table(conn, "/tmp/genes.json.gz", "fb_table_child", 1)
+                register_table(conn, "/tmp/gene_ids.tsv.gz", "fb_gene_ids", 1)
+                register_table(conn, "/tmp/annotations.tsv.gz", "fb_annotations", 1)
                 conn.commit()
             finally:
                 conn.close()
@@ -533,13 +519,7 @@ class FlybaseCoreTests(unittest.TestCase):
                 ensure_registry(conn)
                 conn.execute('CREATE TABLE "fb_table" ("record_id" TEXT, "symbol" TEXT)')
                 conn.execute('INSERT INTO "fb_table" VALUES ("FBgn1", "gene1")')
-                conn.execute(
-                    """
-                    INSERT INTO fb_ingest_registry (source_path, table_name, row_count)
-                    VALUES (?, ?, ?)
-                    """,
-                    ("/tmp/genes.json.gz", "fb_table", 1),
-                )
+                register_table(conn, "/tmp/genes.json.gz", "fb_table", 1)
                 conn.commit()
             finally:
                 conn.close()
@@ -562,20 +542,8 @@ class FlybaseCoreTests(unittest.TestCase):
                 conn.execute('CREATE TABLE "fb_table_child" ("parent_record_id" TEXT, "ordinal" TEXT, "value" TEXT)')
                 conn.execute('INSERT INTO "fb_table" VALUES ("FBgn1", "gene1")')
                 conn.execute('INSERT INTO "fb_table_child" VALUES ("FBgn1", "1", "child")')
-                conn.execute(
-                    """
-                    INSERT INTO fb_ingest_registry (source_path, table_name, row_count)
-                    VALUES (?, ?, ?)
-                    """,
-                    ("/tmp/genes.json.gz", "fb_table", 1),
-                )
-                conn.execute(
-                    """
-                    INSERT INTO fb_ingest_registry (source_path, table_name, row_count)
-                    VALUES (?, ?, ?)
-                    """,
-                    ("/tmp/genes.json.gz", "fb_table_child", 1),
-                )
+                register_table(conn, "/tmp/genes.json.gz", "fb_table", 1)
+                register_table(conn, "/tmp/genes.json.gz", "fb_table_child", 1)
                 conn.commit()
             finally:
                 conn.close()

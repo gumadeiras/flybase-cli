@@ -46,20 +46,18 @@ def describe_table(
         return None
     source_path, row_count = row
     columns_meta = conn.execute(f'PRAGMA table_info("{table_name}")').fetchall()
-    columns = []
-    for meta in columns_meta:
-        column_name = meta[1]
-        columns.append(
-            {
-                "name": column_name,
-                "sample_values": sample_column_values(
-                    conn,
-                    table_name,
-                    column_name,
-                    sample_values,
-                ),
-            }
-        )
+    columns = [
+        {
+            "name": column_name,
+            "sample_values": sample_column_values(
+                conn,
+                table_name,
+                column_name,
+                sample_values,
+            ),
+        }
+        for _, column_name, *_ in columns_meta
+    ]
     return {
         "table_name": table_name,
         "source_path": source_path,
@@ -171,7 +169,6 @@ ID_ALIAS_GROUPS: dict[str, tuple[str, ...]] = {
 
 def infer_id_alias_relationships(tables: list[dict[str, object]]) -> list[dict[str, object]]:
     relationships: list[dict[str, object]] = []
-    seen: set[tuple[str, str, str]] = set()
 
     for group, aliases in ID_ALIAS_GROUPS.items():
         matches: list[tuple[str, str]] = []
@@ -182,10 +179,6 @@ def infer_id_alias_relationships(tables: list[dict[str, object]]) -> list[dict[s
             if alias is not None:
                 matches.append((table_name, alias))
         for (left_table, left_column), (right_table, right_column) in itertools.combinations(matches, 2):
-            key = (group, left_table, right_table)
-            if key in seen:
-                continue
-            seen.add(key)
             relationships.append(
                 {
                     "kind": "id-alias",
@@ -312,24 +305,40 @@ def build_query_templates(
     return templates
 
 
-def build_schema_summary(
+def collect_schema_details(
     db_path: Path,
     table_names: list[str] | None = None,
     sample_values: int = 3,
     query_limit: int = 5,
-) -> dict[str, object]:
+) -> tuple[list[dict[str, object]], list[dict[str, object]], list[dict[str, object]]]:
     tables = describe_tables(
         db_path,
         table_names=table_names,
         sample_values=sample_values,
     )
     relationships = infer_schema_relationships(tables)
+    query_templates = build_query_templates(tables, relationships, limit=query_limit)
+    return tables, relationships, query_templates
+
+
+def build_schema_summary(
+    db_path: Path,
+    table_names: list[str] | None = None,
+    sample_values: int = 3,
+    query_limit: int = 5,
+) -> dict[str, object]:
+    tables, relationships, query_templates = collect_schema_details(
+        db_path,
+        table_names=table_names,
+        sample_values=sample_values,
+        query_limit=query_limit,
+    )
     return {
         "db_path": str(db_path),
         "table_count": len(tables),
         "tables": tables,
         "relationships": relationships,
-        "query_templates": build_query_templates(tables, relationships, limit=query_limit),
+        "query_templates": query_templates,
     }
 
 
@@ -356,15 +365,15 @@ def build_query_plan(
     sample_values: int = 3,
     limit: int = 5,
 ) -> dict[str, object]:
-    summary = build_schema_summary(
+    tables, relationships, query_templates = collect_schema_details(
         db_path,
         table_names=table_names,
         sample_values=sample_values,
         query_limit=limit,
     )
     return {
-        "db_path": summary["db_path"],
-        "table_count": summary["table_count"],
-        "relationship_count": len(summary["relationships"]),
-        "queries": summary["query_templates"],
+        "db_path": str(db_path),
+        "table_count": len(tables),
+        "relationship_count": len(relationships),
+        "queries": query_templates,
     }
