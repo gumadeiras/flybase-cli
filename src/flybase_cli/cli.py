@@ -46,7 +46,12 @@ from .postgres import (
 )
 from .querying import execute_sql, parse_cli_params, run_query_template
 from .schema import build_query_plan, describe_tables, export_schema_summary
-from .syncing import build_preset_release_diff, build_release_diff, sync_incremental_preset
+from .syncing import (
+    build_preset_release_diff,
+    build_release_diff,
+    sync_full_release,
+    sync_incremental_preset,
+)
 
 
 def print_json(payload: object) -> None:
@@ -226,6 +231,27 @@ def cmd_sync(args: argparse.Namespace) -> int:
         manifest_path=manifest_path,
         release=args.release,
         force=args.force,
+    )
+    summary["db_path"] = str(db_path)
+    print_json(summary)
+    return 0
+
+
+def cmd_full_sync(args: argparse.Namespace) -> int:
+    root = Path(args.root)
+    db_path = Path(args.db) if args.db else default_db_for_release(root, args.release)
+    manifest_path = Path(args.manifest) if args.manifest else root / "manifests" / args.release / "full-sync.json"
+    summary = sync_full_release(
+        root=root,
+        db_path=db_path,
+        manifest_path=manifest_path,
+        release=args.release,
+        prefix=args.prefix,
+        include=args.include,
+        exclude=args.exclude,
+        ingestable_only=not args.all_files,
+        force=args.force,
+        no_header=args.no_header,
     )
     summary["db_path"] = str(db_path)
     print_json(summary)
@@ -520,6 +546,22 @@ def build_parser() -> argparse.ArgumentParser:
     sync_parser.add_argument("--manifest")
     sync_parser.add_argument("--force", action="store_true")
     sync_parser.set_defaults(func=cmd_sync)
+
+    full_sync_parser = subparsers.add_parser(
+        "full-sync",
+        help="crawl and sync all release bulk files under a prefix",
+    )
+    full_sync_parser.add_argument("--root", default=str(DEFAULT_ROOT))
+    full_sync_parser.add_argument("--db")
+    full_sync_parser.add_argument("--release", default=DEFAULT_RELEASE)
+    full_sync_parser.add_argument("--prefix", default="precomputed_files/")
+    full_sync_parser.add_argument("--manifest")
+    full_sync_parser.add_argument("--include", action="append", default=[])
+    full_sync_parser.add_argument("--exclude", action="append", default=[])
+    full_sync_parser.add_argument("--all-files", action="store_true")
+    full_sync_parser.add_argument("--force", action="store_true")
+    full_sync_parser.add_argument("--no-header", action="store_true")
+    full_sync_parser.set_defaults(func=cmd_full_sync)
 
     sync_incremental_parser = subparsers.add_parser(
         "sync-incremental",

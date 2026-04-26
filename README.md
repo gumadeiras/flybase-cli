@@ -35,6 +35,12 @@ python3 flybase_cli.py sync gene-core --release FB2026_01
 
 python3 flybase_cli.py sync gene-knowledge --release FB2026_01
 
+python3 flybase_cli.py full-sync --release FB2026_01
+
+python3 flybase_cli.py full-sync \
+  --release FB2026_01 \
+  --include 'best_gene_summary|entity_publication'
+
 python3 flybase_cli.py sync-incremental \
   gene-knowledge \
   --from-release FB2025_06 \
@@ -109,6 +115,14 @@ python3 flybase_cli.py api domain/FBgn0001250
 - `gene-knowledge`: core gene facts + representative publications + orthology tables
 - `orthology`: ortholog, paralog, and disease-association tables
 - `interactions`: gene- and allele-level interaction tables
+
+## Full sync
+
+- `full-sync` crawls an entire release prefix, default `precomputed_files/`
+- default behavior: download only files the current loaders can ingest into SQLite
+- use `--all-files` if you want non-ingestable release artifacts too
+- use `--include` / `--exclude` to stage a narrower smoke or partial warehouse
+- default manifest path: `data/flybase/manifests/<release>/full-sync.json`
 
 ## Discovery
 
@@ -197,6 +211,7 @@ python3 flybase_cli.py query-run \
 - nested JSON child tables keep lineage columns like `parent_record_id`, `parent_ordinal`, `ordinal`.
 - many FlyBase files start with `##` metadata lines; loader skips those.
 - `sync` writes a preset manifest under `data/flybase/manifests/<release>/`.
+- `full-sync` is the broadest offline path for release bulk data without going through the full Postgres dump.
 - `sync --release FB2026_01` defaults to `data/flybase/FB2026_01.sqlite` to avoid cross-release mixing.
 - `sync-incremental` uses stable manifest keys so release-renamed files still land in `updated` instead of noisy add/remove pairs.
 - `release-diff` compares releases either by raw prefix or by curated multi-prefix preset.

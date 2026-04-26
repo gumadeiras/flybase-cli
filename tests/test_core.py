@@ -26,6 +26,7 @@ from flybase_cli.core import (
     path_from_root_url,
     rebuild_search_index,
     release_base_url,
+    resolve_manifest_entry,
     search_index,
     sync_manifest,
 )
@@ -60,6 +61,12 @@ class FlybaseCoreTests(unittest.TestCase):
         self.assertEqual(
             normalize_bucket_href("/releases/current/precomputed_files/genes/foo.tsv.gz", "current"),
             "precomputed_files/genes/foo.tsv.gz",
+        )
+
+    def test_resolve_manifest_entry_from_relative_child(self) -> None:
+        self.assertEqual(
+            resolve_manifest_entry("precomputed_files/", "genes/index.html", "FB2026_01"),
+            "precomputed_files/genes/index.html",
         )
 
     def test_release_base_url(self) -> None:

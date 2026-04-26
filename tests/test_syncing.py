@@ -12,8 +12,10 @@ from flybase_cli.config import ManifestSelection, SyncPreset
 from flybase_cli.syncing import (
     build_preset_release_diff,
     diff_manifests,
+    full_manifest,
     incremental_manifest,
     stable_manifest_key,
+    sync_full_release,
     sync_incremental_preset,
 )
 
@@ -74,6 +76,27 @@ class FlybaseSyncingTests(unittest.TestCase):
         finally:
             syncing.preset_manifest = original
 
+    def test_full_manifest_defaults_to_ingestable_entries(self) -> None:
+        original = syncing.build_manifest
+        try:
+            syncing.build_manifest = lambda prefix, release: [
+                {"path": "precomputed_files/genes/a.tsv.gz", "url": "https://example.test/a.tsv.gz"},
+                {"path": "precomputed_files/genes/b.json.gz", "url": "https://example.test/b.json.gz"},
+                {"path": "precomputed_files/genes/c.zip", "url": "https://example.test/c.zip"},
+            ]
+            manifest = full_manifest(release="FB2026_01")
+            self.assertEqual(
+                [item["path"] for item in manifest],
+                [
+                    "precomputed_files/genes/a.tsv.gz",
+                    "precomputed_files/genes/b.json.gz",
+                ],
+            )
+            full = full_manifest(release="FB2026_01", ingestable_only=False)
+            self.assertEqual(len(full), 3)
+        finally:
+            syncing.build_manifest = original
+
     def test_sync_incremental_preset_downloads_only_selected_files(self) -> None:
         preset = SyncPreset(
             name="mini",
@@ -116,6 +139,29 @@ class FlybaseSyncingTests(unittest.TestCase):
                 self.assertTrue((tmp / "diff.json").exists())
         finally:
             syncing.preset_manifest = original
+
+    def test_sync_full_release_ingests_filtered_manifest(self) -> None:
+        original = syncing.build_manifest
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmp = Path(tmpdir)
+                source = tmp / "mini.tsv"
+                source.write_text("#id\tvalue\na\tb\n", encoding="utf-8")
+                syncing.build_manifest = lambda prefix, release: [
+                    {"path": "precomputed_files/genes/mini.tsv", "url": source.as_uri()},
+                    {"path": "precomputed_files/genes/skip.zip", "url": "https://example.test/skip.zip"},
+                ]
+                summary = sync_full_release(
+                    root=tmp / "root",
+                    db_path=tmp / "flybase.sqlite",
+                    manifest_path=tmp / "manifest.json",
+                    release="FB2026_01",
+                )
+                self.assertEqual(summary["mode"], "full-sync")
+                self.assertEqual(summary["file_count"], 1)
+                self.assertEqual(summary["ingested_tables"][0]["row_count"], 1)
+        finally:
+            syncing.build_manifest = original
 
 
 if __name__ == "__main__":

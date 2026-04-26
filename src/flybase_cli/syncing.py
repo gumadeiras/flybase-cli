@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .config import SyncPreset
 from .core import build_manifest, filter_manifest, sync_manifest, write_json
+from .loaders import is_ingestable
 
 
 RELEASE_TOKEN_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -41,6 +42,10 @@ def merge_manifests(manifests: list[list[dict[str, str]]]) -> list[dict[str, str
     return sorted(merged.values(), key=lambda item: item["path"])
 
 
+def filter_ingestable_manifest(manifest: list[dict[str, str]]) -> list[dict[str, str]]:
+    return [item for item in manifest if is_ingestable(Path(item["path"]))]
+
+
 def preset_manifest(preset: SyncPreset, release: str) -> list[dict[str, str]]:
     manifests: list[list[dict[str, str]]] = []
     for selection in preset.selections:
@@ -52,6 +57,24 @@ def preset_manifest(preset: SyncPreset, release: str) -> list[dict[str, str]]:
             )
         )
     return merge_manifests(manifests)
+
+
+def full_manifest(
+    *,
+    release: str,
+    prefix: str = "precomputed_files/",
+    include: list[str] | tuple[str, ...] = (),
+    exclude: list[str] | tuple[str, ...] = (),
+    ingestable_only: bool = True,
+) -> list[dict[str, str]]:
+    manifest = filter_manifest(
+        build_manifest(prefix, release=release),
+        include,
+        exclude,
+    )
+    if ingestable_only:
+        manifest = filter_ingestable_manifest(manifest)
+    return manifest
 
 
 def diff_manifests(
@@ -190,5 +213,42 @@ def sync_incremental_preset(
         "incremental_file_count": len(selected_manifest),
         "diff_path": str(diff_path) if diff_path is not None else None,
         **diff,
+        **summary,
+    }
+
+
+def sync_full_release(
+    *,
+    root: Path,
+    db_path: Path,
+    manifest_path: Path,
+    release: str,
+    prefix: str = "precomputed_files/",
+    include: list[str] | tuple[str, ...] = (),
+    exclude: list[str] | tuple[str, ...] = (),
+    ingestable_only: bool = True,
+    force: bool = False,
+    no_header: bool = False,
+) -> dict[str, object]:
+    manifest = full_manifest(
+        release=release,
+        prefix=prefix,
+        include=include,
+        exclude=exclude,
+        ingestable_only=ingestable_only,
+    )
+    summary = sync_manifest(
+        manifest,
+        root=root,
+        db_path=db_path,
+        manifest_path=manifest_path,
+        force=force,
+        no_header=no_header,
+    )
+    return {
+        "mode": "full-sync",
+        "release": release,
+        "prefix": prefix,
+        "ingestable_only": ingestable_only,
         **summary,
     }

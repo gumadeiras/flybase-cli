@@ -111,6 +111,13 @@ def normalize_bucket_href(href: str, release: str) -> str:
     return normalize_path(clean)
 
 
+def resolve_manifest_entry(current: str, href: str, release: str) -> str:
+    normalized = normalize_bucket_href(href, release)
+    if current and normalized and not href.startswith("/") and not normalized.startswith(current):
+        normalized = normalize_path(f"{current}{normalized}")
+    return normalized
+
+
 def scrape_links(url: str) -> list[dict[str, str]]:
     parser = DirectoryIndexParser()
     parser.feed(fetch_text(url))
@@ -147,7 +154,7 @@ def build_manifest(prefix: str, release: str = "current") -> list[dict[str, str]
         seen.add(current)
         page_url = urllib.parse.urljoin(base_url, current)
         for entry in scrape_index(page_url):
-            normalized_entry = normalize_bucket_href(entry, release)
+            normalized_entry = resolve_manifest_entry(current, entry, release)
             if normalized_entry.endswith("index.html"):
                 normalized_entry = normalized_entry[: -len("index.html")]
             if current and not normalized_entry.startswith(current):

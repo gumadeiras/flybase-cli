@@ -26,6 +26,7 @@ Core gene tables:
 ```bash
 python3 flybase_cli.py sync gene-core --release FB2026_01
 python3 flybase_cli.py sync gene-knowledge --release FB2026_01
+python3 flybase_cli.py full-sync --release FB2026_01
 python3 flybase_cli.py sync-incremental gene-knowledge --from-release FB2025_06 --release FB2026_01
 ```
 
@@ -71,6 +72,7 @@ python3 flybase_cli.py search --db data/flybase/FB2026_01.sqlite 'memory formati
 - Use `query_templates` from `schema-export` or `query-plan` for ready SQL.
 - Prefer named templates for common biological questions; execute with `query-run`.
 - Nested JSON child tables use lineage columns like `parent_record_id`, `parent_ordinal`, `ordinal`.
+- `full-sync` is the broad offline release path; default mode skips non-ingestable artifacts like zip bundles.
 
 ## Online fallback
 
