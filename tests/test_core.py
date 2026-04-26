@@ -13,12 +13,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from flybase_cli.config import GENOME_SYNC_PRESETS, SYNC_PRESETS
 from flybase_cli.core import (
-    build_schema_summary,
     extract_genomes,
     build_manifest_from_url,
-    describe_tables,
     ensure_registry,
-    export_schema_summary,
     find_genome,
     genome_asset_pattern,
     genome_section_url,
@@ -39,6 +36,12 @@ from flybase_cli.loaders import (
     ingest_feature_file,
     ingest_json,
     sanitize_columns,
+)
+from flybase_cli.schema import (
+    build_query_plan,
+    build_schema_summary,
+    describe_tables,
+    export_schema_summary,
 )
 
 
@@ -513,6 +516,13 @@ class FlybaseCoreTests(unittest.TestCase):
                 },
                 summary["relationships"],
             )
+            join_template = next(
+                query
+                for query in summary["query_templates"]
+                if query["kind"] == "join" and query["tables"] == ["fb_table_child", "fb_table"]
+            )
+            self.assertIn('JOIN "fb_table" AS dst', join_template["sql"])
+            self.assertIn('src."parent_record_id" = dst."record_id"', join_template["sql"])
 
     def test_export_schema_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -540,6 +550,42 @@ class FlybaseCoreTests(unittest.TestCase):
             self.assertEqual(written["tables"][0]["table_name"], "fb_table")
             self.assertEqual(written["tables"][0]["columns"][0]["name"], "record_id")
             self.assertEqual(written["relationships"], [])
+            self.assertEqual(written["query_templates"][0]["kind"], "table-sample")
+
+    def test_build_query_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "flybase.sqlite"
+            conn = open_db(db_path)
+            try:
+                ensure_registry(conn)
+                conn.execute('CREATE TABLE "fb_table" ("record_id" TEXT, "symbol" TEXT)')
+                conn.execute('CREATE TABLE "fb_table_child" ("parent_record_id" TEXT, "ordinal" TEXT, "value" TEXT)')
+                conn.execute('INSERT INTO "fb_table" VALUES ("FBgn1", "gene1")')
+                conn.execute('INSERT INTO "fb_table_child" VALUES ("FBgn1", "1", "child")')
+                conn.execute(
+                    """
+                    INSERT INTO fb_ingest_registry (source_path, table_name, row_count)
+                    VALUES (?, ?, ?)
+                    """,
+                    ("/tmp/genes.json.gz", "fb_table", 1),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO fb_ingest_registry (source_path, table_name, row_count)
+                    VALUES (?, ?, ?)
+                    """,
+                    ("/tmp/genes.json.gz", "fb_table_child", 1),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            plan = build_query_plan(db_path, sample_values=1, limit=7)
+            self.assertEqual(plan["table_count"], 2)
+            self.assertEqual(plan["relationship_count"], 1)
+            self.assertEqual(plan["queries"][0]["kind"], "table-sample")
+            join_template = next(query for query in plan["queries"] if query["kind"] == "join")
+            self.assertTrue(join_template["sql"].endswith("LIMIT 7"))
 
     def test_sync_manifest_writes_manifest_and_ingests(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

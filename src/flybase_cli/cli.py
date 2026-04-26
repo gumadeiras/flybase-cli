@@ -22,14 +22,12 @@ from .config import (
 from .core import (
     build_manifest,
     build_manifest_from_url,
-    export_schema_summary,
     fetch_bytes,
     filter_manifest,
     ingest_files,
     find_genome,
     genome_asset_pattern,
     genome_section_url,
-    describe_tables,
     list_genomes,
     list_tables,
     load_manifest,
@@ -47,6 +45,7 @@ from .postgres import (
     execute_pg_load_script,
     write_pg_load_script,
 )
+from .schema import build_query_plan, describe_tables, export_schema_summary
 
 
 def print_json(payload: object) -> None:
@@ -134,8 +133,21 @@ def cmd_schema_export(args: argparse.Namespace) -> int:
         output_path,
         table_names=args.tables or None,
         sample_values=args.sample_values,
+        query_limit=args.query_limit,
     )
     print_json({**payload, "output_path": str(output_path)})
+    return 0
+
+
+def cmd_query_plan(args: argparse.Namespace) -> int:
+    print_json(
+        build_query_plan(
+            Path(args.db),
+            table_names=args.tables or None,
+            sample_values=args.sample_values,
+            limit=args.limit,
+        )
+    )
     return 0
 
 
@@ -385,8 +397,16 @@ def build_parser() -> argparse.ArgumentParser:
     schema_parser.add_argument("--db", default=str(DEFAULT_DB))
     schema_parser.add_argument("--tables", nargs="*")
     schema_parser.add_argument("--sample-values", type=int, default=3)
+    schema_parser.add_argument("--query-limit", type=int, default=5)
     schema_parser.add_argument("--output")
     schema_parser.set_defaults(func=cmd_schema_export)
+
+    query_plan_parser = subparsers.add_parser("query-plan", help="suggest starter SQL from schema relationships")
+    query_plan_parser.add_argument("--db", default=str(DEFAULT_DB))
+    query_plan_parser.add_argument("--tables", nargs="*")
+    query_plan_parser.add_argument("--sample-values", type=int, default=1)
+    query_plan_parser.add_argument("--limit", type=int, default=5)
+    query_plan_parser.set_defaults(func=cmd_query_plan)
 
     presets_parser = subparsers.add_parser("presets", help="list sync presets")
     presets_parser.set_defaults(func=cmd_presets)
