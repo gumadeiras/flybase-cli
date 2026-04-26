@@ -64,12 +64,37 @@ GENOME_ASSET_PATTERNS = {
 
 
 @dataclass(frozen=True)
-class SyncPreset:
-    name: str
-    description: str
+class ManifestSelection:
     prefix: str
     includes: tuple[str, ...]
     excludes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class SyncPreset:
+    name: str
+    description: str
+    selections: tuple[ManifestSelection, ...]
+
+    @property
+    def prefixes(self) -> tuple[str, ...]:
+        return tuple(selection.prefix for selection in self.selections)
+
+    @property
+    def includes(self) -> tuple[str, ...]:
+        return tuple(
+            pattern
+            for selection in self.selections
+            for pattern in selection.includes
+        )
+
+    @property
+    def excludes(self) -> tuple[str, ...]:
+        return tuple(
+            pattern
+            for selection in self.selections
+            for pattern in selection.excludes
+        )
 
 
 @dataclass(frozen=True)
@@ -86,34 +111,104 @@ SYNC_PRESETS: dict[str, SyncPreset] = {
     "gene-core": SyncPreset(
         name="gene-core",
         description="Gene summaries plus core identifier/link tables.",
-        prefix="precomputed_files/genes/",
-        includes=(
-            r"best_gene_summary",
-            r"fbgn_fbtr_fbpp_fb_",
-            r"fbgn_annotation_ID",
-            r"dmel_gene_sequence_ontology_annotations",
+        selections=(
+            ManifestSelection(
+                prefix="precomputed_files/genes/",
+                includes=(
+                    r"best_gene_summary",
+                    r"fbgn_fbtr_fbpp_fb_",
+                    r"fbgn_annotation_ID",
+                    r"dmel_gene_sequence_ontology_annotations",
+                ),
+            ),
         ),
     ),
     "gene-expression": SyncPreset(
         name="gene-expression",
         description="Expression-oriented gene reports.",
-        prefix="precomputed_files/genes/",
-        includes=(
-            r"curated_expression",
-            r"high-throughput_gene_expression",
-            r"gene_rpkm_report",
-            r"FlyCellAtlas_slimmed_gene_expression",
-            r"scRNA",
+        selections=(
+            ManifestSelection(
+                prefix="precomputed_files/genes/",
+                includes=(
+                    r"curated_expression",
+                    r"high-throughput_gene_expression",
+                    r"gene_rpkm_report",
+                    r"FlyCellAtlas_slimmed_gene_expression",
+                    r"scRNA",
+                ),
+            ),
         ),
     ),
     "references": SyncPreset(
         name="references",
         description="Publication and cross-reference tables.",
-        prefix="precomputed_files/references/",
-        includes=(
-            r"fbrf_pmid_pmcid_doi",
-            r"entity_publication",
-            r"representative_publications",
+        selections=(
+            ManifestSelection(
+                prefix="precomputed_files/references/",
+                includes=(
+                    r"fbrf_pmid_pmcid_doi",
+                    r"entity_publication",
+                    r"representative_publications",
+                ),
+            ),
+        ),
+    ),
+    "gene-knowledge": SyncPreset(
+        name="gene-knowledge",
+        description="Core gene facts plus representative publications and orthology tables.",
+        selections=(
+            ManifestSelection(
+                prefix="precomputed_files/genes/",
+                includes=(
+                    r"best_gene_summary",
+                    r"fbgn_fbtr_fbpp_fb_",
+                    r"fbgn_annotation_ID",
+                    r"dmel_gene_sequence_ontology_annotations",
+                ),
+            ),
+            ManifestSelection(
+                prefix="precomputed_files/references/",
+                includes=(
+                    r"entity_publication",
+                    r"representative_publications",
+                ),
+            ),
+            ManifestSelection(
+                prefix="precomputed_files/orthologs/",
+                includes=(
+                    r"orthologs",
+                    r"paralogs",
+                    r"disease",
+                ),
+            ),
+        ),
+    ),
+    "orthology": SyncPreset(
+        name="orthology",
+        description="Ortholog, paralog, and disease-association support tables.",
+        selections=(
+            ManifestSelection(
+                prefix="precomputed_files/orthologs/",
+                includes=(
+                    r"orthologs",
+                    r"paralogs",
+                    r"disease",
+                ),
+            ),
+        ),
+    ),
+    "interactions": SyncPreset(
+        name="interactions",
+        description="Gene- and allele-level interaction tables.",
+        selections=(
+            ManifestSelection(
+                prefix="precomputed_files/genes/",
+                includes=(r"gene_genetic_interactions",),
+            ),
+            ManifestSelection(
+                prefix="precomputed_files/alleles/",
+                includes=(r"allele_genetic_interactions",),
+            ),
         ),
     ),
 }

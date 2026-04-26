@@ -636,6 +636,7 @@ def search_index(
             SELECT
                 table_name,
                 record_id,
+                bm25(fb_search_fts) AS score,
                 snippet(fb_search_fts, 2, '[', ']', '...', 12) AS snippet
             FROM fb_search_fts
             WHERE fb_search_fts MATCH ?
@@ -650,7 +651,8 @@ def search_index(
             {
                 "table_name": row[0],
                 "record_id": row[1],
-                "snippet": row[2],
+                "score": row[2],
+                "snippet": row[3],
             }
             for row in conn.execute(sql, params).fetchall()
         ]
@@ -666,11 +668,16 @@ def sync_preset(
     release: str = "current",
     force: bool = False,
 ) -> dict[str, object]:
-    manifest = filter_manifest(
-        build_manifest(preset.prefix, release=release),
-        preset.includes,
-        preset.excludes,
-    )
+    manifest_map: dict[str, dict[str, str]] = {}
+    for selection in preset.selections:
+        filtered = filter_manifest(
+            build_manifest(selection.prefix, release=release),
+            selection.includes,
+            selection.excludes,
+        )
+        for item in filtered:
+            manifest_map[item["path"]] = item
+    manifest = sorted(manifest_map.values(), key=lambda item: item["path"])
     summary = sync_manifest(
         manifest,
         root=root,
