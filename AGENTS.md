@@ -47,6 +47,7 @@ Inspect available tables:
 python3 flybase_cli.py tables --db data/flybase/FB2026_01.sqlite --columns
 python3 flybase_cli.py describe --db data/flybase/FB2026_01.sqlite --sample-values 1
 python3 flybase_cli.py schema-export --db data/flybase/FB2026_01.sqlite --sample-values 1
+python3 flybase_cli.py query-plan --db data/flybase/FB2026_01.sqlite --sample-values 1 --limit 5
 ```
 
 Query locally:
@@ -62,6 +63,7 @@ python3 flybase_cli.py search --db data/flybase/FB2026_01.sqlite 'memory formati
 - `schema-export` writes `<db>.schema.json`.
 - Use `tables` + `columns` for available surfaces.
 - Use `relationships` from `schema-export` for joins.
+- Use `query_templates` from `schema-export` or `query-plan` for ready SQL.
 - Nested JSON child tables use lineage columns like `parent_record_id`, `parent_ordinal`, `ordinal`.
 
 ## Online fallback
