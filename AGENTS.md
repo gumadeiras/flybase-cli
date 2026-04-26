@@ -63,6 +63,48 @@ python3 flybase_cli.py fts-build --db data/flybase/FB2026_01.sqlite
 python3 flybase_cli.py search --db data/flybase/FB2026_01.sqlite 'memory formation'
 ```
 
+## Gene lookup playbook
+
+For a gene symbol like `Or59b`:
+
+1. Resolve the stable gene id first.
+
+```bash
+python3 flybase_cli.py query-run \
+  --db data/flybase/FB2026_01.sqlite \
+  --template-name gene-summary-by-symbol \
+  --param gene_symbol=Or59b
+```
+
+2. Use the returned `fbgn_id` as the join key across local tables.
+
+3. If a named template exists, prefer it over ad hoc SQL.
+
+4. If table or column names are unclear, inspect schema directly.
+
+```bash
+python3 flybase_cli.py query-plan --db data/flybase/FB2026_01.sqlite --limit 10
+sqlite3 -json data/flybase/FB2026_01.sqlite "pragma table_info('fb_entity_publication_fb_2026_01');"
+```
+
+5. Typical follow-up tables for one gene:
+
+- `fb_fbgn_annotation_id_fb_<release>`
+- `fb_fbgn_fbtr_fbpp_fb_<release>`
+- `fb_gene_map_table_fb_<release>`
+- `fb_curated_expression_fb_<release>`
+- `fb_high_throughput_gene_expression_fb_<release>`
+- `fb_entity_publication_fb_<release>`
+- `fb_representative_publications_fb_<release>`
+- `fb_dmel_gene_sequence_ontology_annotations_fb_<release>`
+
+6. Build FTS before using `search`.
+
+```bash
+python3 flybase_cli.py fts-build --db data/flybase/FB2026_01.sqlite
+python3 flybase_cli.py search --db data/flybase/FB2026_01.sqlite 'Or59b'
+```
+
 ## Schema hints
 
 - `schema-export` writes `<db>.schema.json`.
