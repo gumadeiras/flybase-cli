@@ -24,6 +24,33 @@ Use FlyBase bulk files for agent workloads. Live API: helper only.
 - `flybase_cli.py`: thin repo-root shim
 - `pyproject.toml`: package metadata / console entrypoint
 
+## Install
+
+PyPI with `pipx`:
+
+```bash
+pipx install flybase-cli
+```
+
+PyPI with plain `pip`:
+
+```bash
+python3 -m pip install flybase-cli
+```
+
+Homebrew:
+
+```bash
+brew tap gumadeiras/tap
+brew install flybase-cli
+```
+
+From source:
+
+```bash
+python3 -m pip install -e .
+```
+
 ## CLI
 
 ```bash
