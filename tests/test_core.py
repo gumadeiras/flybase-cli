@@ -673,7 +673,7 @@ class FlybaseCoreTests(unittest.TestCase):
             capture_output=True,
             text=True,
         )
-        self.assertIn("0.1.0", result.stdout)
+        self.assertIn("0.1.1", result.stdout)
 
 
 if __name__ == "__main__":
