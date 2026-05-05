@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -667,13 +668,16 @@ class FlybaseCoreTests(unittest.TestCase):
 
     def test_cli_version_flag(self) -> None:
         root = Path(__file__).resolve().parents[1]
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(root / "src")
         result = subprocess.run(
             [sys.executable, str(root / "flybase_cli.py"), "--version"],
             check=True,
             capture_output=True,
+            env=env,
             text=True,
         )
-        self.assertIn("0.1.1", result.stdout)
+        self.assertIn("0.1.2", result.stdout)
 
 
 if __name__ == "__main__":
