@@ -51,6 +51,19 @@ From source:
 python3 -m pip install -e .
 ```
 
+## Release
+
+Current release: `v0.1.2`.
+
+Tag pushes like `vX.Y.Z` run the release workflow: build artifacts, create a
+GitHub release, publish to PyPI, and update `gumadeiras/homebrew-tap`.
+
+Release prerequisites:
+
+- PyPI trusted publishing configured for this repo.
+- `HOMEBREW_TAP_TOKEN` repository secret can write to
+  `gumadeiras/homebrew-tap`.
+
 ## CLI
 
 ```bash
