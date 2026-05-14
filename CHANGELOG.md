@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changes
+
+- Updated release automation to the current GitHub Actions checkout, Python setup, and release actions.
+
 ## 0.1.2 - 2026-05-05
 
 ### Fixes
