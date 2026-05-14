@@ -100,23 +100,23 @@ jobs:
       - name: Update formula
         run: |
           version="${GITHUB_REF_NAME#v}"
-          sdist="dist/flybase_cli-${version}.tar.gz"
+          sdist="dist/flybase-${version}.tar.gz"
           sha256="$(sha256sum "$sdist" | awk '{print $1}')"
           python homebrew-tap/scripts/update_formula.py \
-            --formula homebrew-tap/Formula/flybase-cli.rb \
-            --url "https://github.com/gumadeiras/flybase-cli/releases/download/v${version}/flybase_cli-${version}.tar.gz" \
+            --formula homebrew-tap/Formula/flybase.rb \
+            --url "https://github.com/gumadeiras/flybase-cli/releases/download/v${version}/flybase-${version}.tar.gz" \
             --sha256 "$sha256"
 
       - name: Commit and push formula
         working-directory: homebrew-tap
         run: |
-          if git diff --quiet -- Formula/flybase-cli.rb; then
-            echo "Formula/flybase-cli.rb already up to date"
+          if git diff --quiet -- Formula/flybase.rb; then
+            echo "Formula/flybase.rb already up to date"
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Formula/flybase-cli.rb
-          git commit -m "Update flybase-cli to ${GITHUB_REF_NAME#v}"
+          git add Formula/flybase.rb
+          git commit -m "Update flybase to ${GITHUB_REF_NAME#v}"
           git push

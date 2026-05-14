@@ -4,6 +4,7 @@
 
 ### Changes
 
+- Renamed the published PyPI and Homebrew package to `flybase`, with `flybase` as the console entrypoint.
 - Updated release automation to the current GitHub Actions checkout, Python setup, and release actions.
 - Added a local release wrapper for version sync, package validation, tagging, and release workflow verification.
 

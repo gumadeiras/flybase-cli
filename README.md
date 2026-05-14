@@ -29,20 +29,20 @@ Use FlyBase bulk files for agent workloads. Live API: helper only.
 PyPI with `pipx`:
 
 ```bash
-pipx install flybase-cli
+pipx install flybase
 ```
 
 PyPI with plain `pip`:
 
 ```bash
-python3 -m pip install flybase-cli
+python3 -m pip install flybase
 ```
 
 Homebrew:
 
 ```bash
 brew tap gumadeiras/tap
-brew install flybase-cli
+brew install flybase
 ```
 
 From source:

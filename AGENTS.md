@@ -12,7 +12,7 @@
 
 ## Goal
 
-Use `flybase-cli` to fetch FlyBase data into local files + SQLite, then query locally first.
+Use `flybase` to fetch FlyBase data into local files + SQLite, then query locally first.
 
 ## Defaults
 

@@ -5,8 +5,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEFAULT_REMOTE="${FLYBASE_RELEASE_REMOTE:-origin}"
 PYTHON="${PYTHON:-python3}"
-PACKAGE_DIST="flybase_cli"
-CLI_BIN="flybase-cli"
+PACKAGE_DIST="flybase"
+CLI_BIN="flybase"
 VERSION_FILES=(pyproject.toml src/flybase_cli/version.py)
 TEST_COMMAND=(python -m unittest discover -s tests)
 INSTALL_COMMAND=(python -m pip install -e "$ROOT_DIR")
