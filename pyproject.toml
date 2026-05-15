@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flybase-cli"
-version = "0.1.2"
+version = "0.1.3"
 description = "FlyBase sync/query helper for agents."
 readme = "README.md"
 license = "MIT"

@@ -1,5 +1,8 @@
 # FlyBase local sync/query
 
+> This package has been renamed. Install `flybase` now:
+> `pipx install flybase`
+
 Use FlyBase bulk files for agent workloads. Live API: helper only.
 
 ## Why
